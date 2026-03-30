@@ -1,0 +1,6 @@
+id,category,locale,page_url,question,expected_keywords,forbidden_keywords
+TC001,product_search,en-US,https://www.samsung.com/,What are the latest Samsung Galaxy smartphones available?,Galaxy|smartphone|Android,error|unavailable
+TC002,support,en-US,https://www.samsung.com/,How do I reset my Samsung TV to factory settings?,reset|settings|TV|factory,impossible|not supported
+TC003,sustainability,en-US,https://www.samsung.com/,What is Samsung doing to reduce its environmental impact?,environment|sustainability|eco|recycling,harmful|damage
+TC004,product_search,en-US,https://www.samsung.com/,Tell me about Samsung QLED TV features.,QLED|4K|display|smart TV,broken|unavailable
+TC005,support,en-US,https://www.samsung.com/,How do I connect my Samsung phone to a Windows PC?,USB|wireless|Smart Switch|PC,impossible|not supported
