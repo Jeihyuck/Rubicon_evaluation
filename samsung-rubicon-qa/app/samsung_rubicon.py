@@ -20,6 +20,7 @@ LAUNCHER_CANDIDATES = [
     {"type": "role", "role": "button", "name": compile_regex(r"AI|Chat|챗봇|상담|Assistant|Help|Rubicon|루비콘")},
     {"type": "label", "value": compile_regex(r"AI|Chat|챗봇|상담|Assistant|Help|Rubicon|루비콘")},
     {"type": "text", "value": compile_regex(r"AI|Chat|챗봇|상담|Assistant|Help|Rubicon|루비콘")},
+    {"type": "css", "value": "#spr-chat__trigger-button, .spr-chat__trigger-box button"},
     {"type": "css", "value": "button[aria-label*='chat' i], button[aria-label*='assistant' i], button[aria-label*='rubicon' i]"},
     {"type": "css", "value": "[data-testid*='chat'], [data-testid*='assistant'], [data-testid*='rubicon']"},
     {"type": "css", "value": "button[class*='chat'], button[class*='assistant'], button[class*='floating']"},
@@ -30,18 +31,21 @@ INPUT_CANDIDATES = [
     {"type": "role", "role": "textbox", "name": compile_regex(r"질문|문의|메시지|채팅|입력|message|chat")},
     {"type": "label", "value": compile_regex(r"질문|문의|메시지|채팅|입력|message|chat")},
     {"type": "placeholder", "value": compile_regex(r"질문|문의|메시지|무엇을 도와|message|ask")},
+    {"type": "css", "value": "textarea[placeholder*='메시지'], textarea[aria-label*='메시지'], textarea[placeholder*='message' i], textarea[aria-label*='message' i]"},
     {"type": "css", "value": "textarea, input[type='text'], [contenteditable='true']"},
 ]
 
 SEND_BUTTON_CANDIDATES = [
     {"type": "role", "role": "button", "name": compile_regex(r"Send|전송|제출|문의|보내기")},
     {"type": "label", "value": compile_regex(r"Send|전송|제출|문의|보내기")},
+    {"type": "css", "value": "button[aria-label*='send' i], button[aria-label*='전송'], button[aria-label*='보내기']"},
     {"type": "css", "value": "button[aria-label*='send' i], button[aria-label*='전송'], button[type='submit']"},
     {"type": "css", "value": "button[class*='send'], button[class*='submit'], button svg"},
 ]
 
 BOT_MESSAGE_CANDIDATES = [
     {"type": "css", "value": ".bot-message, .agent-message, [data-message-author='bot'], [data-author='assistant'], [data-author='bot']"},
+    {"type": "css", "value": "[class*='agent' i], [class*='assistant' i], [class*='message' i], [data-testid*='message' i]"},
     {"type": "css", "value": "[role='log'] article, [role='log'] li, [role='list'] article, [role='list'] li"},
     {"type": "css", "value": "article[class*='assistant'], div[class*='assistant'], div[class*='response'], div[class*='message']"},
     {"type": "text", "value": compile_regex(r"서비스센터|삼성닷컴|도와드리|안내드리")},
@@ -55,6 +59,7 @@ HISTORY_CANDIDATES = [
 
 CONTAINER_CANDIDATES = [
     {"type": "css", "value": "[role='dialog'], [role='complementary'], aside, section[class*='chat'], div[class*='chat'], div[class*='assistant']"},
+    {"type": "css", "value": "[class*='spr' i], [id*='spr' i], [title*='Sprinklr' i], iframe[title*='live chat' i], iframe[title*='라이브챗']"},
     {"type": "css", "value": "iframe, form, [data-testid*='chat'], [data-testid*='assistant']"},
 ]
 
@@ -118,6 +123,51 @@ def _maybe_visible(scope: Page | Frame, candidate: dict[str, Any]) -> Locator | 
     return None
 
 
+def _sprinklr_launcher_present(page: Page) -> bool:
+    try:
+        return page.locator("#spr-chat__trigger-button, .spr-chat__trigger-box button, iframe[title='라이브챗']").count() > 0
+    except Exception:
+        return False
+
+
+def _open_sprinklr_widget(page: Page) -> bool:
+    runtime = _runtime()
+    script = """
+() => {
+  const button = document.querySelector('#spr-chat__trigger-button, .spr-chat__trigger-box button');
+  if (button) {
+    button.click();
+    return true;
+  }
+  return false;
+}
+"""
+
+    try:
+        if page.evaluate(script):
+            page.wait_for_timeout(1500)
+    except Exception:
+        pass
+
+    frame_selectors = ["iframe[title='라이브챗']", "iframe[title='Sprinklr live chat']"]
+    for selector in frame_selectors:
+        try:
+            trigger = page.frame_locator(selector).locator("button, [role='button']").first
+            if trigger.count() <= 0:
+                continue
+            trigger.click(timeout=3000)
+            page.wait_for_timeout(1500)
+            runtime.logger.info("rubicon icon clicked")
+            return True
+        except Exception:
+            continue
+
+    if _sprinklr_launcher_present(page):
+        runtime.logger.info("rubicon icon clicked")
+        return True
+    return False
+
+
 def open_homepage(page: Page) -> None:
     """Open the Samsung /sec/ homepage without entering any login flow."""
 
@@ -163,6 +213,14 @@ def open_rubicon_widget(page: Page) -> None:
         if input_locator is not None:
             runtime.logger.info("rubicon icon clicked")
             return
+
+    if _open_sprinklr_widget(page):
+        for _ in range(10):
+            for _, scope in _iter_scopes(page):
+                input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=600)
+                if input_locator is not None:
+                    return
+            page.wait_for_timeout(1000)
 
     for scope_name, scope in _iter_scopes(page):
         launcher, _ = first_visible_locator(scope, LAUNCHER_CANDIDATES, timeout_ms=1500)
