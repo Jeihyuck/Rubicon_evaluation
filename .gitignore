@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+
+# Reports & artifacts (generated at runtime – not committed)
+reports/*
+!reports/.gitkeep
+artifacts/fullpage/*
+!artifacts/fullpage/.gitkeep
+artifacts/chatbox/*
+!artifacts/chatbox/.gitkeep
+
+# Playwright
+playwright-report/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
