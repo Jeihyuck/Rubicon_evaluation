@@ -1,0 +1,16 @@
+.env
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+artifacts/fullpage/*.png
+artifacts/chatbox/*.png
+artifacts/chatbox/*.html
+artifacts/video/*
+artifacts/trace/*
+reports/*.log
+reports/latest_results.json
+reports/latest_results.csv
+reports/summary.md

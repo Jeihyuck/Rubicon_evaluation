@@ -1,0 +1,7 @@
+id,category,locale,page_url,question,expected_keywords,forbidden_keywords
+case01,service,ko-KR,https://www.samsung.com/sec/,갤럭시 S24 배터리 교체는 어디서 할 수 있나요?,서비스센터|배터리|교체,로그인|비밀번호|인증
+case02,repair,ko-KR,https://www.samsung.com/sec/,휴대폰 액정 수리 접수는 어떻게 하나요?,수리|접수|서비스센터,로그인|본인인증|결제
+case03,delivery,ko-KR,https://www.samsung.com/sec/,주문 배송 조회는 어디에서 확인할 수 있나요?,배송|조회|주문,로그인 필수|계정 인증
+case04,product,ko-KR,https://www.samsung.com/sec/,갤럭시 AI 기능에 대한 안내를 받을 수 있나요?,갤럭시 AI|안내|제품,비밀번호|주민번호
+case05,support,ko-KR,https://www.samsung.com/sec/,삼성닷컴 고객센터 또는 문의 방법을 알려주세요.,고객센터|문의|상담,로그인만|해킹|우회
+case06,tradein,ko-KR,https://www.samsung.com/sec/,보상 판매나 트레이드인 관련 정보는 어디서 보나요?,보상 판매|트레이드인|안내,인증 우회|로그인 강제

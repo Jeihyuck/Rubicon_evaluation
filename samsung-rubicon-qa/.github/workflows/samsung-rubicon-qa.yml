@@ -1,0 +1,64 @@
+name: samsung-rubicon-qa
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  rubicon-qa:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SAMSUNG_BASE_URL: https://www.samsung.com/sec/
+      HEADLESS: "true"
+      DEFAULT_LOCALE: ko-KR
+      MAX_QUESTIONS: "5"
+      OPENAI_MODEL: gpt-5
+      PLAYWRIGHT_TIMEOUT_MS: "30000"
+      ANSWER_STABLE_CHECKS: "3"
+      ANSWER_STABLE_INTERVAL_SEC: "1.0"
+      ENABLE_VIDEO: "true"
+      ENABLE_TRACE: "true"
+      ENABLE_OCR_FALLBACK: "false"
+    defaults:
+      run:
+        working-directory: samsung-rubicon-qa
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install OCR system packages
+        if: env.ENABLE_OCR_FALLBACK == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-kor
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install OCR Python dependencies
+        if: env.ENABLE_OCR_FALLBACK == 'true'
+        run: |
+          pip install Pillow pytesseract
+
+      - name: Install Playwright Chromium
+        run: playwright install --with-deps chromium
+
+      - name: Run Samsung Rubicon QA
+        run: python run.py
+
+      - name: Upload artifacts and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: samsung-rubicon-qa-output
+          path: |
+            samsung-rubicon-qa/artifacts/
+            samsung-rubicon-qa/reports/
