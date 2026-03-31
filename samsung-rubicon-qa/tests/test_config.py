@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from app.config import AppConfig, load_config
 
@@ -71,9 +68,19 @@ class TestLoadConfig:
             config = load_config(tmp_path)
         assert config.openai_api_key == "sk-abc"
         assert config.samsung_base_url == "https://www.samsung.com/sec/"
-        assert config.headless is True
+        assert config.headless is False
         assert config.max_questions == 5
+        assert config.openai_model == "gpt-5"
         assert config.enable_ocr_fallback is False
+
+    def test_invalid_base_url_is_normalized(self, tmp_path: Path):
+        env = {
+            "OPENAI_API_KEY": "sk-abc",
+            "SAMSUNG_BASE_URL": "https://example.com/",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config(tmp_path)
+        assert config.samsung_base_url == "https://www.samsung.com/sec/"
 
     def test_env_overrides(self, tmp_path: Path):
         env = {

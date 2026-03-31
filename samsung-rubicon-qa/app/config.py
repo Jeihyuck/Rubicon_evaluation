@@ -84,16 +84,20 @@ def load_config(project_root: Path | None = None) -> AppConfig:
 
     resolved_root = project_root or Path(__file__).resolve().parent.parent
     env_path = resolved_root / ".env"
-    load_dotenv(env_path if env_path.exists() else None)
+    if env_path.exists():
+        load_dotenv(env_path)
+    samsung_base_url = os.getenv("SAMSUNG_BASE_URL", "https://www.samsung.com/sec/").strip() or "https://www.samsung.com/sec/"
+    if not samsung_base_url.startswith("https://www.samsung.com/sec/"):
+        samsung_base_url = "https://www.samsung.com/sec/"
 
     return AppConfig(
         project_root=resolved_root,
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-        samsung_base_url=os.getenv("SAMSUNG_BASE_URL", "https://www.samsung.com/sec/").strip(),
-        headless=_to_bool(os.getenv("HEADLESS"), True),
+        samsung_base_url=samsung_base_url,
+        headless=_to_bool(os.getenv("HEADLESS"), False),
         default_locale=os.getenv("DEFAULT_LOCALE", "ko-KR").strip(),
         max_questions=int(os.getenv("MAX_QUESTIONS", "5")),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o").strip(),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-5").strip(),
         playwright_timeout_ms=int(os.getenv("PLAYWRIGHT_TIMEOUT_MS", "30000")),
         answer_stable_checks=int(os.getenv("ANSWER_STABLE_CHECKS", "3")),
         answer_stable_interval_sec=float(os.getenv("ANSWER_STABLE_INTERVAL_SEC", "1.0")),

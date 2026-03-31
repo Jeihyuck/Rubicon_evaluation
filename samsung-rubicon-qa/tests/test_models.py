@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-
-import pytest
-
 from app.models import (
     EvalResult,
     ExtractedPair,
@@ -98,12 +94,12 @@ class TestRunResult:
             evaluation=_make_eval(),
         )
         flat = result.to_flat_dict()
-        assert "id" in flat
-        assert "pair_answer" in flat
-        assert "eval_overall_score" in flat
-        assert flat["id"] == "c01"
-        assert flat["pair_answer"] == "서비스센터에서 가능합니다."
-        assert flat["eval_overall_score"] == 0.9
+        assert "case_id" in flat
+        assert "answer" in flat
+        assert "overall_score" in flat
+        assert flat["case_id"] == "c01"
+        assert flat["answer"] == "서비스센터에서 가능합니다."
+        assert flat["overall_score"] == 0.9
 
     def test_to_flat_dict_no_key_conflicts(self):
         result = RunResult(
@@ -112,8 +108,34 @@ class TestRunResult:
             evaluation=_make_eval(),
         )
         flat = result.to_flat_dict()
-        pair_keys = {f"pair_{k}" for k in asdict(_make_pair())}
-        eval_keys = {f"eval_{k}" for k in asdict(_make_eval())}
-        case_keys = set(asdict(_make_test_case()).keys())
-        all_expected = case_keys | pair_keys | eval_keys
+        all_expected = {
+            "run_timestamp",
+            "case_id",
+            "category",
+            "page_url",
+            "locale",
+            "question",
+            "expected_keywords",
+            "forbidden_keywords",
+            "answer",
+            "extraction_source",
+            "extraction_confidence",
+            "response_ms",
+            "status",
+            "error_message",
+            "full_screenshot_path",
+            "chat_screenshot_path",
+            "video_path",
+            "trace_path",
+            "html_fragment_path",
+            "overall_score",
+            "relevance_score",
+            "clarity_score",
+            "completeness_score",
+            "keyword_alignment_score",
+            "hallucination_risk",
+            "needs_human_review",
+            "reason",
+            "fix_suggestion",
+        }
         assert all_expected.issubset(flat.keys())

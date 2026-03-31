@@ -75,13 +75,44 @@ class RunResult:
             "evaluation": asdict(self.evaluation),
         }
 
-    def to_flat_dict(self) -> dict[str, Any]:
-        """Flatten the result for CSV output."""
+    def to_report_dict(self) -> dict[str, Any]:
+        """Flatten the result using the report field names required by the project."""
 
-        data = asdict(self.test_case)
-        data.update({f"pair_{key}": value for key, value in asdict(self.pair).items()})
-        data.update({f"eval_{key}": value for key, value in asdict(self.evaluation).items()})
-        return data
+        return {
+            "run_timestamp": self.pair.run_timestamp,
+            "case_id": self.pair.case_id,
+            "category": self.pair.category,
+            "page_url": self.pair.page_url,
+            "locale": self.pair.locale,
+            "question": self.pair.question,
+            "expected_keywords": "|".join(self.test_case.expected_keywords),
+            "forbidden_keywords": "|".join(self.test_case.forbidden_keywords),
+            "answer": self.pair.answer,
+            "extraction_source": self.pair.extraction_source,
+            "extraction_confidence": self.pair.extraction_confidence,
+            "response_ms": self.pair.response_ms,
+            "status": self.pair.status,
+            "error_message": self.pair.error_message,
+            "full_screenshot_path": self.pair.full_screenshot_path,
+            "chat_screenshot_path": self.pair.chat_screenshot_path,
+            "video_path": self.pair.video_path,
+            "trace_path": self.pair.trace_path,
+            "html_fragment_path": self.pair.html_fragment_path,
+            "overall_score": self.evaluation.overall_score,
+            "relevance_score": self.evaluation.relevance_score,
+            "clarity_score": self.evaluation.clarity_score,
+            "completeness_score": self.evaluation.completeness_score,
+            "keyword_alignment_score": self.evaluation.keyword_alignment_score,
+            "hallucination_risk": self.evaluation.hallucination_risk,
+            "needs_human_review": self.evaluation.needs_human_review,
+            "reason": self.evaluation.reason,
+            "fix_suggestion": self.evaluation.fix_suggestion,
+        }
+
+    def to_flat_dict(self) -> dict[str, Any]:
+        """Backward-compatible alias used by tests and report generation."""
+
+        return self.to_report_dict()
 
 
 @dataclass(slots=True)
@@ -97,6 +128,7 @@ class ResolvedChatContext:
     history_candidates: list[dict[str, Any]]
     loading_candidates: list[dict[str, Any]]
     baseline_bot_count: int = 0
+    baseline_last_answer: str = ""
 
 
 @dataclass(slots=True)

@@ -6,12 +6,9 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from app.config import AppConfig
-from app.evaluator import fallback_evaluation
 from app.models import EvalResult, ExtractedPair, RunResult, TestCase
-from app.report_writer import _build_summary, write_reports
+from app.report_writer import _build_summary, format_case_console_block, write_reports
 from app.utils import utc_now_timestamp
 
 
@@ -92,9 +89,9 @@ class TestWriteReports:
             data = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
             assert isinstance(data, list)
             assert len(data) == 1
-            assert data[0]["test_case"]["id"] == "c01"
-            assert "pair" in data[0]
-            assert "evaluation" in data[0]
+            assert data[0]["case_id"] == "c01"
+            assert data[0]["answer"] == "서비스센터에서 가능합니다."
+            assert data[0]["overall_score"] == 0.8
 
     def test_csv_report_has_expected_columns(self):
         import csv as csv_module
@@ -108,9 +105,9 @@ class TestWriteReports:
                 reader = csv_module.DictReader(fh)
                 rows = list(reader)
             assert len(rows) == 1
-            assert "id" in rows[0]
-            assert "pair_answer" in rows[0]
-            assert "eval_overall_score" in rows[0]
+            assert "case_id" in rows[0]
+            assert "answer" in rows[0]
+            assert "overall_score" in rows[0]
 
     def test_empty_results_writes_valid_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -152,6 +149,22 @@ class TestBuildSummary:
         assert "에러 케이스" in summary
         assert "c01" in summary
 
+    def test_summary_includes_case_sections(self):
+        summary = _build_summary([_make_result("c01")])
+        assert "케이스별 결과" in summary
+        assert "Question:" in summary
+        assert "Answer:" in summary
+
     def test_empty_results(self):
         summary = _build_summary([])
         assert "총 케이스 수: 0" in summary
+
+
+class TestConsoleBlock:
+    def test_format_matches_required_shape(self):
+        block = format_case_console_block(_make_result("case01"))
+        assert "CASE: case01" in block
+        assert "QUESTION:" in block
+        assert "ANSWER:" in block
+        assert "CHAT SCREENSHOT:" in block
+        assert block.count("=" * 50) == 2

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,7 +45,8 @@ class CaseBrowserSession:
             raw_video_path = Path(video_source.path())
             if video_target is not None:
                 ensure_parent(video_target)
-                shutil.copy2(raw_video_path, video_target)
+                if raw_video_path.resolve() != video_target.resolve():
+                    shutil.move(str(raw_video_path), str(video_target))
                 video_path = str(video_target)
             else:
                 video_path = str(raw_video_path)
@@ -60,11 +63,29 @@ class BrowserManager:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
 
+    def _launch_browser(self) -> Browser:
+        if self._playwright is None:
+            raise RuntimeError("Playwright runtime is not started")
+
+        try:
+            return self._playwright.chromium.launch(headless=self.config.headless)
+        except Exception as exc:
+            message = str(exc)
+            if "Executable doesn't exist" not in message and "browser executable" not in message.lower():
+                raise
+
+            self.logger.info("Chromium not installed; running Playwright install for Codespaces")
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+                check=True,
+            )
+            return self._playwright.chromium.launch(headless=self.config.headless)
+
     def start(self) -> None:
         """Start Playwright and launch Chromium."""
 
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self.config.headless)
+        self._browser = self._launch_browser()
 
     def new_case_session(self, case_id: str) -> CaseBrowserSession:
         """Create a new isolated browser context and page for a single case."""

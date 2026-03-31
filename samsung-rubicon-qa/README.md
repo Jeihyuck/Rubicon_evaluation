@@ -1,181 +1,100 @@
 # Samsung Rubicon QA
 
-삼성닷컴 공개 영역인 https://www.samsung.com/sec/ 에서 로그인 없이 Rubicon 챗봇을 실제 브라우저 UI로 조작하고, 질문-답변 pair를 수집한 뒤 OpenAI Responses API로 평가하는 QA 및 회귀 테스트 프로젝트다.
-
-이 프로젝트의 핵심은 OCR이 아니라 브라우저 DOM 기반 질문-답변 pair 수집이며, OCR은 DOM 추출 실패 시에만 백업으로 사용한다.
+https://www.samsung.com/sec/ 공개 페이지에서 로그인 없이 Rubicon 챗 위젯을 열고, 미리 정의된 질문을 입력한 뒤, DOM 우선으로 답변을 추출하고 OpenAI Responses API로 평가하는 Codespaces 실행용 브라우저 QA 프로젝트다.
 
 ## 프로젝트 개요
 
-- 대상 페이지: https://www.samsung.com/sec/
-- 로그인 시도 금지: 로그인 버튼 클릭, 계정 인증 플로우 진입, 세션 우회 로직을 구현하지 않는다.
-- 수집 방식: DOM 텍스트 추출 우선, 실패 시에만 OCR fallback 사용
-- 증적 보존: 전체 페이지 스크린샷, 챗 영역 스크린샷, Playwright video, Playwright trace 저장
-- 평가 방식: OpenAI Responses API Structured Outputs(JSON Schema)
+- 대상 URL은 항상 https://www.samsung.com/sec/ 이다.
+- 로그인 버튼 클릭, 계정 인증, 세션 우회는 구현하지 않는다.
+- 답변 추출은 DOM 우선이며 OCR은 실패 시에만 백업으로 사용한다.
+- 실행 명령은 python run.py 이다.
+- 결과는 터미널, reports 폴더, artifacts 폴더에서 즉시 확인할 수 있다.
 
-## 디렉터리 구조
+## Codespaces 실행 전제
 
-```text
-samsung-rubicon-qa/
-├─ app/
-│  ├─ __init__.py
-│  ├─ main.py
-│  ├─ config.py
-│  ├─ logger.py
-│  ├─ models.py
-│  ├─ csv_loader.py
-│  ├─ browser.py
-│  ├─ samsung_rubicon.py
-│  ├─ dom_extractor.py
-│  ├─ ocr_fallback.py
-│  ├─ evaluator.py
-│  ├─ report_writer.py
-│  └─ utils.py
-├─ testcases/
-│  └─ questions.csv
-├─ artifacts/
-│  ├─ fullpage/
-│  ├─ chatbox/
-│  ├─ video/
-│  └─ trace/
-├─ reports/
-├─ .github/workflows/
-│  └─ samsung-rubicon-qa.yml
-├─ .env.example
-├─ .gitignore
-├─ requirements.txt
-├─ README.md
-└─ run.py
-```
+- Python 3.11 기준으로 작성했다.
+- Playwright Chromium이 없으면 실행 시 자동 설치를 시도한다.
+- HEADLESS 기본값은 false 이므로 브라우저가 실제로 열리는 장면을 볼 수 있다.
 
-## 동작 흐름
+## 실행 방법
 
-1. https://www.samsung.com/sec/ 접속
-2. 팝업 또는 배너가 챗 UI를 가리면 닫기
-3. 우하단 Rubicon 아이콘 또는 챗 런처 찾기
-4. page DOM 우선, 실패 시 iframe 순회로 채팅 컨텍스트 찾기
-5. 질문 입력 후 전송
-6. 마지막 bot message가 안정화될 때까지 대기
-7. DOM 기반으로 질문-답변 pair 추출
-8. 전체 페이지, 챗 박스 스크린샷 저장
-9. video 및 trace 저장
-10. OpenAI로 구조화 평가 수행
-11. JSON, CSV, Markdown 리포트 생성
-
-## 로컬 실행 방법
-
-### 1) 가상환경 생성
+OPENAI_API_KEY가 이미 .env 또는 Codespaces 환경변수에 있다면 바로 아래만 실행하면 된다.
 
 ```bash
 cd samsung-rubicon-qa
-python3.11 -m venv .venv
-source .venv/bin/activate
+pip install -r requirements.txt
+python run.py
 ```
 
-### 2) 의존성 설치
+.env 파일이 아직 없다면 아래를 먼저 실행한다.
 
 ```bash
-pip install --upgrade pip
+cd samsung-rubicon-qa
+cp .env.example .env
 pip install -r requirements.txt
-playwright install --with-deps chromium
+python run.py
 ```
 
-OCR fallback을 실제로 쓰는 경우에만 추가 의존성을 설치한다.
+OCR fallback을 켜려면 추가로 아래를 설치한다.
 
 ```bash
 pip install Pillow pytesseract
-```
-
-그리고 시스템에 tesseract가 있어야 한다.
-
-```bash
 sudo apt-get update
 sudo apt-get install -y tesseract-ocr tesseract-ocr-kor
 ```
 
-### 3) 환경변수 설정
+## 실행 후 어디서 결과를 보는지
 
-```bash
-cp .env.example .env
-```
+- 터미널: 각 케이스마다 질문, 답변, 추출 소스, overall score, human review 필요 여부, 스크린샷 경로가 출력된다.
+- CSV: reports/latest_results.csv
+- JSON: reports/latest_results.json
+- 요약: reports/summary.md
+- 챗 스크린샷: artifacts/chatbox/
+- 전체 화면 스크린샷: artifacts/fullpage/
+- 비디오: artifacts/video/
+- 트레이스: artifacts/trace/
 
-필수 항목:
+## reports/latest_results.csv 보는 방법
 
-- OPENAI_API_KEY
+- spreadsheet 도구로 열거나 터미널에서 head reports/latest_results.csv 로 확인한다.
 
-### 4) 실행
+## reports/summary.md 보는 방법
 
-```bash
-python run.py
-```
+- 마크다운 프리뷰로 열거나 터미널에서 cat reports/summary.md 로 확인한다.
 
-## Playwright 설치 방법
+## artifacts/chatbox/ 스크린샷 보는 방법
 
-Playwright 브라우저는 Python 패키지 설치와 별도로 설치해야 한다.
-
-```bash
-playwright install --with-deps chromium
-```
-
-## GitHub Actions 설정 방법
-
-워크플로 파일은 .github/workflows/samsung-rubicon-qa.yml 이다.
-
-- workflow_dispatch 수동 실행 지원
-- schedule 일일 실행 지원
-- ubuntu-latest 에서 Python 3.11 사용
-- Chromium 설치 후 python run.py 실행
-- 실패해도 artifacts/reports 업로드
-
-## Secrets 설정 방법
-
-GitHub 저장소 Settings > Secrets and variables > Actions 에서 아래를 추가한다.
-
-- OPENAI_API_KEY
-
-## CSV 작성 방법
-
-testcases/questions.csv 컬럼:
-
-- id
-- category
-- locale
-- page_url
-- question
-- expected_keywords
-- forbidden_keywords
-
-복수 키워드는 | 로 구분한다.
-
-## DOM 추출 우선 / OCR fallback 정책
-
-- 1순위: 마지막 bot message DOM 텍스트
-- 2순위: message history DOM 추출
-- 3순위: chat HTML fragment 저장
-- 4순위: OCR fallback
-
-DOM 추출에 성공하면 OCR은 수행하지 않는다.
-
-## 결과 파일 설명
-
-- reports/latest_results.json: 전체 실행 결과 배열
-- reports/latest_results.csv: 평탄화된 결과 테이블
-- reports/summary.md: 사람이 읽기 좋은 요약 리포트
-- reports/runtime.log: 런타임 로그
+- 각 케이스별 챗 영역 PNG와 DOM HTML fragment가 저장된다.
+- 파일명은 타임스탬프와 case id를 포함한다.
 
 ## video / trace 확인 방법
 
-- video: artifacts/video/
-- trace: artifacts/trace/
-
-trace는 아래 명령으로 볼 수 있다.
+- video 파일은 artifacts/video/*.webm 에 저장된다.
+- trace 파일은 artifacts/trace/*.zip 에 저장된다.
+- trace 확인 명령:
 
 ```bash
 playwright show-trace artifacts/trace/<trace-file>.zip
 ```
 
+## DOM 추출 우선, OCR fallback 정책
+
+- 1순위는 마지막 bot message DOM 추출이다.
+- 2순위는 DOM 기반 전체 history 추출이다.
+- 3순위는 챗 컨테이너 HTML fragment 저장이다.
+- 4순위가 OCR fallback 이다.
+- ENABLE_OCR_FALLBACK=false 가 기본값이다.
+
+## 로그인 금지 설계 설명
+
+- 시작 URL은 https://www.samsung.com/sec/ 로 고정된다.
+- 허용되지 않은 외부 URL은 설정 단계에서 원래 URL로 되돌린다.
+- 로그인 버튼 클릭이나 인증 관련 로직은 구현하지 않았다.
+- 평가지침에도 로그인 전용 안내는 감점 대상으로 반영된다.
+
 ## selector 수정 방법
 
-챗 UI 구조가 바뀌면 app/samsung_rubicon.py 의 후보 배열을 먼저 수정한다.
+챗 UI가 바뀌면 app/samsung_rubicon.py 의 후보 배열을 먼저 조정한다.
 
 - LAUNCHER_CANDIDATES
 - INPUT_CANDIDATES
@@ -185,23 +104,29 @@ playwright show-trace artifacts/trace/<trace-file>.zip
 - CONTAINER_CANDIDATES
 - LOADING_CANDIDATES
 
+우선순위는 get_by_role, get_by_label, get_by_placeholder, get_by_text, data-testid, aria-label/CSS fallback 순서다.
+
 ## iframe 디버깅 방법
 
-- page DOM에서 입력창이 안 잡히면 iframe 내부인지 확인한다.
-- app/samsung_rubicon.py 의 _iter_scopes 와 resolve_chat_context 를 기준으로 frame 순회를 점검한다.
-- trace와 chatbox 스크린샷을 함께 확인한다.
+- page DOM에서 먼저 입력창을 찾고, 실패하면 page.frames 를 순회한다.
+- 가장 높은 점수를 받은 frame을 실제 챗 컨텍스트로 선택한다.
+- trace, fullpage 스크린샷, chatbox HTML fragment를 같이 보면 frame 구조를 빠르게 파악할 수 있다.
 
-## OpenAI 비용 주의사항
+## 실패 케이스 디버깅 방법
 
-- 질문 수가 많을수록 평가 비용이 증가한다.
-- MAX_QUESTIONS 값을 낮춰 점진적으로 검증하는 편이 안전하다.
+- reports/runtime.log 에서 예외 메시지를 먼저 확인한다.
+- reports/summary.md 에서 실패 케이스와 reason을 확인한다.
+- artifacts/chatbox/*.html 로 실제 DOM fragment를 확인한다.
+- artifacts/chatbox/*.png 와 artifacts/fullpage/*.png 를 함께 비교한다.
+- trace 파일을 열어 launcher 클릭, 질문 입력, 답변 대기 구간을 재생한다.
 
-## 실서비스 자동화 주의사항
+## 금지 사항
 
-- 공개 영역만 대상으로 한다.
-- 로그인, 세션 우회, 인증 플로우 자동화는 구현하지 않는다.
-- 팝업, iframe, selector 변경에 민감하므로 주기적 유지보수가 필요하다.
+- GitHub Actions 생성 금지
+- 로그인 시도 금지
+- OCR을 기본 추출 경로로 사용하는 변경 금지
+- artifact 저장 생략 금지
+- 콘솔 출력 생략 금지
+- summary 리포트 생략 금지
 
-## 병렬 실행 최소화 권고
-
-이 프로젝트는 실서비스 브라우저 UI를 실제로 조작하므로 병렬 실행을 최소화하는 편이 안정적이다. 기본 구현은 케이스를 순차 실행한다.
+이 프로젝트의 1차 목표는 Codespaces에서 브라우저를 실제로 열어 질문 입력, 답변 표시, 평가 결과를 사람이 즉시 확인 가능하게 만드는 것이다.

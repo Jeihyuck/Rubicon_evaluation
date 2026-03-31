@@ -13,12 +13,22 @@ from app.config import AppConfig
 from app.dom_extractor import count_bot_messages, extract_dom_payload, extract_last_bot_message_text
 from app.models import BrowserArtifacts, ExtractedPair, ResolvedChatContext, TestCase
 from app.ocr_fallback import extract_text_from_image
-from app.utils import artifact_timestamp, build_locator, compile_regex, first_visible_locator, sanitize_filename, utc_now_timestamp
+from app.utils import (
+    artifact_timestamp,
+    build_locator,
+    compile_regex,
+    first_visible_locator,
+    relative_to_root,
+    sanitize_filename,
+    utc_now_timestamp,
+)
 
 
 LAUNCHER_CANDIDATES = [
     {"type": "role", "role": "button", "name": compile_regex(r"AI|Chat|챗봇|상담|Assistant|Help|Rubicon|루비콘")},
     {"type": "label", "value": compile_regex(r"AI|Chat|챗봇|상담|Assistant|Help|Rubicon|루비콘")},
+    {"type": "testid", "value": "chat-launcher"},
+    {"type": "testid", "value": "assistant-launcher"},
     {"type": "text", "value": compile_regex(r"AI|Chat|챗봇|상담|Assistant|Help|Rubicon|루비콘")},
     {"type": "css", "value": "#spr-chat__trigger-button, .spr-chat__trigger-box button"},
     {"type": "css", "value": "button[aria-label*='chat' i], button[aria-label*='assistant' i], button[aria-label*='rubicon' i]"},
@@ -31,6 +41,8 @@ INPUT_CANDIDATES = [
     {"type": "role", "role": "textbox", "name": compile_regex(r"질문|문의|메시지|채팅|입력|message|chat")},
     {"type": "label", "value": compile_regex(r"질문|문의|메시지|채팅|입력|message|chat")},
     {"type": "placeholder", "value": compile_regex(r"질문|문의|메시지|무엇을 도와|message|ask")},
+    {"type": "testid", "value": "chat-input"},
+    {"type": "testid", "value": "message-input"},
     {"type": "css", "value": "textarea[placeholder*='메시지'], textarea[aria-label*='메시지'], textarea[placeholder*='message' i], textarea[aria-label*='message' i]"},
     {"type": "css", "value": "textarea, input[type='text'], [contenteditable='true']"},
 ]
@@ -38,6 +50,8 @@ INPUT_CANDIDATES = [
 SEND_BUTTON_CANDIDATES = [
     {"type": "role", "role": "button", "name": compile_regex(r"Send|전송|제출|문의|보내기")},
     {"type": "label", "value": compile_regex(r"Send|전송|제출|문의|보내기")},
+    {"type": "testid", "value": "send-button"},
+    {"type": "testid", "value": "message-send"},
     {"type": "css", "value": "button[aria-label*='send' i], button[aria-label*='전송'], button[aria-label*='보내기']"},
     {"type": "css", "value": "button[aria-label*='send' i], button[aria-label*='전송'], button[type='submit']"},
     {"type": "css", "value": "button[class*='send'], button[class*='submit'], button svg"},
@@ -86,6 +100,7 @@ class _RuntimeState:
     logger: Any
     current_case_id: str = ""
     current_case_timestamp: str = ""
+    current_page_url: str = ""
     latest_html_fragment_path: str = ""
 
 
@@ -172,12 +187,50 @@ def open_homepage(page: Page) -> None:
     """Open the Samsung /sec/ homepage without entering any login flow."""
 
     runtime = _runtime()
-    page.goto(runtime.config.samsung_base_url, wait_until="domcontentloaded")
+    target_url = runtime.current_page_url or runtime.config.samsung_base_url
+    if not target_url.startswith(runtime.config.samsung_base_url):
+        target_url = runtime.config.samsung_base_url
+    page.goto(target_url, wait_until="domcontentloaded")
     try:
         page.wait_for_load_state("networkidle", timeout=min(runtime.config.playwright_timeout_ms, 10000))
     except Exception:
         pass
     runtime.logger.info("homepage opened")
+
+
+def _score_scope(scope: Page | Frame, scope_name: str) -> tuple[int, Locator | None, Locator | None, Locator | None]:
+    input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=1200)
+    if input_locator is None:
+        return -1, None, None, None
+
+    send_locator, _ = first_visible_locator(scope, SEND_BUTTON_CANDIDATES, timeout_ms=600)
+    container_locator, _ = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=600)
+    bot_count = 0
+    history_count = 0
+
+    for candidate in BOT_MESSAGE_CANDIDATES:
+        try:
+            bot_count = max(bot_count, build_locator(scope, candidate).count())
+        except Exception:
+            continue
+
+    for candidate in HISTORY_CANDIDATES:
+        try:
+            history_count = max(history_count, build_locator(scope, candidate).count())
+        except Exception:
+            continue
+
+    score = 100
+    if send_locator is not None:
+        score += 15
+    if container_locator is not None:
+        score += 10
+    score += min(bot_count, 5) * 5
+    score += min(history_count, 5) * 2
+    lowered_name = scope_name.lower()
+    if "spr" in lowered_name or "rubicon" in lowered_name or "chat" in lowered_name:
+        score += 15
+    return score, input_locator, send_locator, container_locator
 
 
 def dismiss_popups(page: Page) -> None:
@@ -241,13 +294,15 @@ def resolve_chat_context(page: Page) -> ResolvedChatContext:
     """Resolve the active chat context from the page DOM or nested iframes."""
 
     runtime = _runtime()
+    best_context: ResolvedChatContext | None = None
+    best_score = -1
+
     for scope_name, scope in _iter_scopes(page):
-        input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=1800)
-        if input_locator is None:
+        score, input_locator, send_locator, container_locator = _score_scope(scope, scope_name)
+        if input_locator is None or score < best_score:
             continue
-        send_locator, _ = first_visible_locator(scope, SEND_BUTTON_CANDIDATES, timeout_ms=900)
-        container_locator, _ = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=900)
-        context = ResolvedChatContext(
+        best_score = score
+        best_context = ResolvedChatContext(
             scope=scope,
             scope_name=scope_name,
             input_locator=input_locator,
@@ -257,8 +312,9 @@ def resolve_chat_context(page: Page) -> ResolvedChatContext:
             history_candidates=HISTORY_CANDIDATES,
             loading_candidates=LOADING_CANDIDATES,
         )
+    if best_context is not None:
         runtime.logger.info("chat context resolved")
-        return context
+        return best_context
     raise RuntimeError("Chat iframe/input context could not be resolved")
 
 
@@ -267,6 +323,7 @@ def submit_question(context: ResolvedChatContext, question: str) -> None:
 
     runtime = _runtime()
     context.baseline_bot_count = count_bot_messages(context)
+    context.baseline_last_answer = extract_last_bot_message_text(context)
 
     try:
         context.input_locator.click(timeout=1500)
@@ -321,7 +378,8 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> tuple[str, int]:
     while time.perf_counter() < deadline:
         current_count = count_bot_messages(context)
         latest_text = extract_last_bot_message_text(context)
-        if latest_text and current_count >= max(1, context.baseline_bot_count):
+        has_new_answer = current_count > context.baseline_bot_count or latest_text != context.baseline_last_answer
+        if latest_text and has_new_answer:
             if latest_text == previous_text:
                 stable_checks += 1
             else:
@@ -389,6 +447,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     runtime = _runtime()
     runtime.current_case_id = test_case.id
     runtime.current_case_timestamp = artifact_timestamp()
+    runtime.current_page_url = test_case.page_url or runtime.config.samsung_base_url
     runtime.latest_html_fragment_path = ""
 
     context: ResolvedChatContext | None = None
@@ -448,9 +507,12 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         response_ms=response_ms,
         status=status,
         error_message=error_message,
-        full_screenshot_path=str(artifacts.fullpage_screenshot or ""),
-        chat_screenshot_path=str(artifacts.chatbox_screenshot or ""),
+        full_screenshot_path=relative_to_root(artifacts.fullpage_screenshot, runtime.config.project_root),
+        chat_screenshot_path=relative_to_root(artifacts.chatbox_screenshot, runtime.config.project_root),
         video_path="",
         trace_path="",
-        html_fragment_path=str(artifacts.html_fragment_path or runtime.latest_html_fragment_path or ""),
+        html_fragment_path=relative_to_root(
+            artifacts.html_fragment_path or (Path(runtime.latest_html_fragment_path) if runtime.latest_html_fragment_path else None),
+            runtime.config.project_root,
+        ),
     )

@@ -65,6 +65,8 @@ def build_locator(scope: Scope, candidate: dict[str, Any]) -> Locator:
         return scope.get_by_placeholder(candidate["value"])
     if locator_type == "text":
         return scope.get_by_text(candidate["value"])
+    if locator_type == "testid":
+        return scope.get_by_test_id(candidate["value"])
     if locator_type == "css":
         return scope.locator(candidate["value"])
     raise ValueError(f"Unsupported locator candidate: {locator_type}")
@@ -118,3 +120,14 @@ def locator_text(locator: Locator) -> str:
     except Exception:
         return ""
     return " ".join(text.split())
+
+
+def relative_to_root(path: Path | None, root: Path) -> str:
+    """Return a project-relative POSIX path when possible."""
+
+    if path is None:
+        return ""
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except Exception:
+        return str(path)
