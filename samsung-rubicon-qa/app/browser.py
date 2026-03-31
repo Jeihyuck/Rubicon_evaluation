@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -62,6 +63,27 @@ class BrowserManager:
         self.logger = logger
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self._virtual_display: subprocess.Popen[str] | None = None
+
+    def _ensure_virtual_display(self) -> None:
+        if self.config.headless or os.getenv("DISPLAY"):
+            return
+
+        xfvb_path = shutil.which("Xvfb")
+        if xfvb_path is None:
+            raise RuntimeError(
+                "HEADLESS=false 이지만 X 서버가 없습니다. Codespaces에서는 xvfb 패키지가 필요합니다."
+            )
+
+        display = ":99"
+        self.logger.info("No DISPLAY detected; starting Xvfb virtual display on %s", display)
+        self._virtual_display = subprocess.Popen(
+            [xfvb_path, display, "-screen", "0", "1440x1200x24", "-ac"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        os.environ["DISPLAY"] = display
 
     def _launch_browser(self) -> Browser:
         if self._playwright is None:
@@ -84,6 +106,7 @@ class BrowserManager:
     def start(self) -> None:
         """Start Playwright and launch Chromium."""
 
+        self._ensure_virtual_display()
         self._playwright = sync_playwright().start()
         self._browser = self._launch_browser()
 
@@ -118,3 +141,7 @@ class BrowserManager:
             self._browser.close()
         if self._playwright is not None:
             self._playwright.stop()
+        if self._virtual_display is not None:
+            self._virtual_display.terminate()
+            self._virtual_display.wait(timeout=5)
+            self._virtual_display = None
