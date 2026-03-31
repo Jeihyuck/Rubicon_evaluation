@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 from app.models import ResolvedChatContext
 from app.utils import build_locator, ensure_parent, locator_text
+
+
+def _normalize_text(text: str) -> str:
+    return " ".join(text.replace("\u200e", "").split())
+
+
+def _is_noise_text(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return True
+    if re.fullmatch(r"(?:오전|오후)?\s*\d{1,2}:\d{2}(?::\d{2})?", normalized):
+        return True
+    if re.fullmatch(r"\d{1,2}월\s*\d{1,2}일\s*\([^)]+\)", normalized):
+        return True
+    return False
 
 
 def count_bot_messages(chat_context: ResolvedChatContext) -> int:
@@ -34,7 +50,9 @@ def extract_last_bot_message_text(chat_context: ResolvedChatContext) -> str:
         if count <= 0:
             continue
         for index in range(count - 1, -1, -1):
-            text = locator_text(locator.nth(index))
+            text = _normalize_text(locator_text(locator.nth(index)))
+            if _is_noise_text(text):
+                continue
             if text:
                 return text
     return ""
@@ -53,7 +71,7 @@ def extract_message_history(chat_context: ResolvedChatContext) -> list[str]:
         except Exception:
             continue
         for index in range(count):
-            text = locator_text(locator.nth(index))
+            text = _normalize_text(locator_text(locator.nth(index)))
             if not text or text in seen:
                 continue
             seen.add(text)

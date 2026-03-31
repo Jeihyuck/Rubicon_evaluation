@@ -102,6 +102,7 @@ class _RuntimeState:
     current_case_timestamp: str = ""
     current_page_url: str = ""
     latest_html_fragment_path: str = ""
+    current_page: Page | None = None
 
 
 _RUNTIME: _RuntimeState | None = None
@@ -120,11 +121,30 @@ def _runtime() -> _RuntimeState:
     return _RUNTIME
 
 
+def _current_page() -> Page:
+    runtime = _runtime()
+    if runtime.current_page is None:
+        raise RuntimeError("Current page is not bound")
+    return runtime.current_page
+
+
 def _iter_scopes(page: Page) -> list[tuple[str, Page | Frame]]:
     scopes: list[tuple[str, Page | Frame]] = [("page", page)]
+    prioritized_frames: list[tuple[int, str, Frame]] = []
     for index, frame in enumerate(page.frames):
         frame_name = frame.name or frame.url or f"frame-{index}"
-        scopes.append((frame_name, frame))
+        lowered = f"{frame.name} {frame.url}".lower()
+        priority = 50
+        if "spr" in lowered or "live-chat" in lowered or "rubicon" in lowered or "chat" in lowered:
+            priority = 0
+        elif frame.name and "video" in frame.name.lower():
+            priority = 100
+        elif frame.url == "about:blank":
+            priority = 80
+        prioritized_frames.append((priority, frame_name, frame))
+
+    prioritized_frames.sort(key=lambda item: (item[0], item[1]))
+    scopes.extend((frame_name, frame) for _, frame_name, frame in prioritized_frames)
     return scopes
 
 
@@ -199,12 +219,12 @@ def open_homepage(page: Page) -> None:
 
 
 def _score_scope(scope: Page | Frame, scope_name: str) -> tuple[int, Locator | None, Locator | None, Locator | None]:
-    input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=1200)
+    input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=300)
     if input_locator is None:
         return -1, None, None, None
 
-    send_locator, _ = first_visible_locator(scope, SEND_BUTTON_CANDIDATES, timeout_ms=600)
-    container_locator, _ = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=600)
+    send_locator, _ = first_visible_locator(scope, SEND_BUTTON_CANDIDATES, timeout_ms=200)
+    container_locator, _ = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=200)
     bot_count = 0
     history_count = 0
 
@@ -239,18 +259,16 @@ def dismiss_popups(page: Page) -> None:
     runtime = _runtime()
     dismissed = False
     for _ in range(3):
-        for scopes in _iter_scopes(page):
-            _, scope = scopes
-            for candidate_group in (POPUP_CLOSE_CANDIDATES, POPUP_ACCEPT_CANDIDATES):
-                locator, _ = first_visible_locator(scope, candidate_group, timeout_ms=1200)
-                if locator is None:
-                    continue
-                try:
-                    locator.click(timeout=1500)
-                    dismissed = True
-                    page.wait_for_timeout(250)
-                except Exception:
-                    continue
+        for candidate_group in (POPUP_CLOSE_CANDIDATES, POPUP_ACCEPT_CANDIDATES):
+            locator, _ = first_visible_locator(page, candidate_group, timeout_ms=250)
+            if locator is None:
+                continue
+            try:
+                locator.click(timeout=1000)
+                dismissed = True
+                page.wait_for_timeout(200)
+            except Exception:
+                continue
     if dismissed:
         runtime.logger.info("popups dismissed")
     else:
@@ -262,7 +280,7 @@ def open_rubicon_widget(page: Page) -> None:
 
     runtime = _runtime()
     for scope_name, scope in _iter_scopes(page):
-        input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=1200)
+        input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=300)
         if input_locator is not None:
             runtime.logger.info("rubicon icon clicked")
             return
@@ -270,13 +288,13 @@ def open_rubicon_widget(page: Page) -> None:
     if _open_sprinklr_widget(page):
         for _ in range(10):
             for _, scope in _iter_scopes(page):
-                input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=600)
+                input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=250)
                 if input_locator is not None:
                     return
             page.wait_for_timeout(1000)
 
     for scope_name, scope in _iter_scopes(page):
-        launcher, _ = first_visible_locator(scope, LAUNCHER_CANDIDATES, timeout_ms=1500)
+        launcher, _ = first_visible_locator(scope, LAUNCHER_CANDIDATES, timeout_ms=300)
         if launcher is None:
             continue
         try:
@@ -318,6 +336,10 @@ def resolve_chat_context(page: Page) -> ResolvedChatContext:
     raise RuntimeError("Chat iframe/input context could not be resolved")
 
 
+def _resolve_chat_context_for_retry() -> ResolvedChatContext:
+    return resolve_chat_context(_current_page())
+
+
 def submit_question(context: ResolvedChatContext, question: str) -> None:
     """Submit a question through the resolved chat input control."""
 
@@ -327,17 +349,40 @@ def submit_question(context: ResolvedChatContext, question: str) -> None:
 
     try:
         context.input_locator.click(timeout=1500)
-    except Exception:
-        pass
+    except Exception as exc:
+        if "Frame was detached" in str(exc):
+            refreshed = _resolve_chat_context_for_retry()
+            context.scope = refreshed.scope
+            context.scope_name = refreshed.scope_name
+            context.input_locator = refreshed.input_locator
+            context.send_locator = refreshed.send_locator
+            context.container_locator = refreshed.container_locator
+        else:
+            pass
 
     filled = False
     try:
         context.input_locator.fill(question, timeout=2500)
         filled = True
-    except Exception:
+    except Exception as exc:
+        if "Frame was detached" in str(exc):
+            refreshed = _resolve_chat_context_for_retry()
+            context.scope = refreshed.scope
+            context.scope_name = refreshed.scope_name
+            context.input_locator = refreshed.input_locator
+            context.send_locator = refreshed.send_locator
+            context.container_locator = refreshed.container_locator
         filled = False
 
     if not filled:
+        try:
+            context.input_locator.fill(question, timeout=2500)
+            filled = True
+        except Exception:
+            filled = False
+
+    if not filled:
+        filled = False
         try:
             context.input_locator.press("Control+A")
             context.input_locator.press("Backspace")
@@ -441,6 +486,44 @@ def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: 
     )
 
 
+def capture_chat_state(page: Page, context: ResolvedChatContext | None, case_id: str, label: str) -> str:
+    runtime = _runtime()
+    timestamp = runtime.current_case_timestamp or artifact_timestamp()
+    safe_case_id = sanitize_filename(case_id)
+    chatbox_path = runtime.config.chatbox_dir / f"{timestamp}_{safe_case_id}_{label}.png"
+
+    try:
+        if context is None:
+            page.screenshot(path=str(chatbox_path))
+        else:
+            try:
+                refreshed = _resolve_chat_context_for_retry()
+                context.scope = refreshed.scope
+                context.scope_name = refreshed.scope_name
+                context.input_locator = refreshed.input_locator
+                context.send_locator = refreshed.send_locator
+                context.container_locator = refreshed.container_locator
+            except Exception:
+                pass
+
+            if context.container_locator is not None:
+                context.container_locator.screenshot(path=str(chatbox_path))
+            else:
+                context.input_locator.screenshot(path=str(chatbox_path))
+        return relative_to_root(chatbox_path, runtime.config.project_root)
+    except Exception as exc:
+        runtime.logger.exception("Failed to capture %s chat screenshot: %s", label, exc)
+        return ""
+
+
+def _question_echo_from_history(question: str, history: list[str]) -> str:
+    normalized_question = " ".join(question.split())
+    for item in history:
+        if normalized_question and normalized_question in item:
+            return item
+    return ""
+
+
 def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     """Execute one public, non-login Rubicon chatbot scenario end-to-end."""
 
@@ -449,15 +532,20 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     runtime.current_case_timestamp = artifact_timestamp()
     runtime.current_page_url = test_case.page_url or runtime.config.samsung_base_url
     runtime.latest_html_fragment_path = ""
+    runtime.current_page = page
 
     context: ResolvedChatContext | None = None
     artifacts = BrowserArtifacts()
     answer = ""
+    question_echo = ""
+    message_history: list[str] = []
     extraction_source = "unknown"
     extraction_confidence = 0.0
     response_ms = 0
     status = "passed"
     error_message = ""
+    submitted_chat_screenshot_path = ""
+    answered_chat_screenshot_path = ""
 
     try:
         open_homepage(page)
@@ -465,10 +553,14 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         open_rubicon_widget(page)
         context = resolve_chat_context(page)
         submit_question(context, test_case.question)
+        submitted_chat_screenshot_path = capture_chat_state(page, context, test_case.id, "submitted")
         answer, response_ms = wait_for_answer_completion(context)
+        answered_chat_screenshot_path = capture_chat_state(page, context, test_case.id, "answered")
         artifacts = capture_artifacts(page, context, test_case.id)
 
         dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
+        message_history = dom_payload.get("history", [])
+        question_echo = _question_echo_from_history(test_case.question, message_history)
         if dom_payload["success"]:
             answer = dom_payload["answer"]
             extraction_source = "dom"
@@ -507,8 +599,12 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         response_ms=response_ms,
         status=status,
         error_message=error_message,
+        question_echo=question_echo,
+        message_history=message_history,
         full_screenshot_path=relative_to_root(artifacts.fullpage_screenshot, runtime.config.project_root),
         chat_screenshot_path=relative_to_root(artifacts.chatbox_screenshot, runtime.config.project_root),
+        submitted_chat_screenshot_path=submitted_chat_screenshot_path,
+        answered_chat_screenshot_path=answered_chat_screenshot_path,
         video_path="",
         trace_path="",
         html_fragment_path=relative_to_root(

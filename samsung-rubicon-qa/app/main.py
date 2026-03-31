@@ -61,4 +61,5 @@ def run(project_root: Path | None = None) -> list[RunResult]:
     print(f"Results JSON: {relative_to_root(Path(report_paths['json']), config.project_root)}", flush=True)
     print(f"Results CSV: {relative_to_root(Path(report_paths['csv']), config.project_root)}", flush=True)
     print(f"Summary: {relative_to_root(Path(report_paths['summary']), config.project_root)}", flush=True)
+    print(f"Conversations: {relative_to_root(Path(report_paths['conversations']), config.project_root)}", flush=True)
     return results

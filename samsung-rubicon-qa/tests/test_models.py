@@ -65,11 +65,17 @@ class TestExtractedPair:
     def test_default_optional_fields(self):
         pair = _make_pair()
         assert pair.error_message == ""
+        assert pair.question_echo == ""
+        assert pair.message_history == []
         assert pair.full_screenshot_path == ""
         assert pair.chat_screenshot_path == ""
+        assert pair.submitted_chat_screenshot_path == ""
+        assert pair.answered_chat_screenshot_path == ""
         assert pair.video_path == ""
         assert pair.trace_path == ""
         assert pair.html_fragment_path == ""
+        assert pair.evidence_markdown_path == ""
+        assert pair.evidence_json_path == ""
 
 
 class TestRunResult:
@@ -123,11 +129,17 @@ class TestRunResult:
             "response_ms",
             "status",
             "error_message",
+            "question_echo",
+            "message_history",
             "full_screenshot_path",
             "chat_screenshot_path",
+            "submitted_chat_screenshot_path",
+            "answered_chat_screenshot_path",
             "video_path",
             "trace_path",
             "html_fragment_path",
+            "evidence_markdown_path",
+            "evidence_json_path",
             "overall_score",
             "relevance_score",
             "clarity_score",

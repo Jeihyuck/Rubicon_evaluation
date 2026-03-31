@@ -79,6 +79,7 @@ class TestWriteReports:
             assert Path(paths["json"]).exists()
             assert Path(paths["csv"]).exists()
             assert Path(paths["summary"]).exists()
+            assert Path(paths["conversations"]).exists()
 
     def test_json_report_is_valid(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -154,6 +155,7 @@ class TestBuildSummary:
         assert "케이스별 결과" in summary
         assert "Question:" in summary
         assert "Answer:" in summary
+        assert "Question Echo In Chat:" in summary
 
     def test_empty_results(self):
         summary = _build_summary([])

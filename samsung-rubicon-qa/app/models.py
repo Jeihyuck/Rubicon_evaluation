@@ -36,11 +36,17 @@ class ExtractedPair:
     response_ms: int
     status: Literal["passed", "failed"]
     error_message: str = ""
+    question_echo: str = ""
+    message_history: list[str] = field(default_factory=list)
     full_screenshot_path: str = ""
     chat_screenshot_path: str = ""
+    submitted_chat_screenshot_path: str = ""
+    answered_chat_screenshot_path: str = ""
     video_path: str = ""
     trace_path: str = ""
     html_fragment_path: str = ""
+    evidence_markdown_path: str = ""
+    evidence_json_path: str = ""
 
 
 @dataclass(slots=True)
@@ -93,11 +99,17 @@ class RunResult:
             "response_ms": self.pair.response_ms,
             "status": self.pair.status,
             "error_message": self.pair.error_message,
+            "question_echo": self.pair.question_echo,
+            "message_history": " || ".join(self.pair.message_history),
             "full_screenshot_path": self.pair.full_screenshot_path,
             "chat_screenshot_path": self.pair.chat_screenshot_path,
+            "submitted_chat_screenshot_path": self.pair.submitted_chat_screenshot_path,
+            "answered_chat_screenshot_path": self.pair.answered_chat_screenshot_path,
             "video_path": self.pair.video_path,
             "trace_path": self.pair.trace_path,
             "html_fragment_path": self.pair.html_fragment_path,
+            "evidence_markdown_path": self.pair.evidence_markdown_path,
+            "evidence_json_path": self.pair.evidence_json_path,
             "overall_score": self.evaluation.overall_score,
             "relevance_score": self.evaluation.relevance_score,
             "clarity_score": self.evaluation.clarity_score,

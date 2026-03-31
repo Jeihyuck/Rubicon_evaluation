@@ -17,6 +17,7 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
     json_path = config.reports_dir / "latest_results.json"
     csv_path = config.reports_dir / "latest_results.csv"
     summary_path = config.reports_dir / "summary.md"
+    conversations_path = config.reports_dir / "latest_conversations.md"
 
     rows = [result.to_report_dict() for result in run_results]
     write_json(json_path, rows)
@@ -57,10 +58,12 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
         writer.writerows(rows)
 
     summary_path.write_text(_build_summary(run_results), encoding="utf-8")
+    conversations_path.write_text(_build_conversations(run_results), encoding="utf-8")
     return {
         "json": str(json_path),
         "csv": str(csv_path),
         "summary": str(summary_path),
+        "conversations": str(conversations_path),
     }
 
 
@@ -83,6 +86,7 @@ def _build_summary(run_results: list[RunResult]) -> str:
         "- CSV: reports/latest_results.csv",
         "- Summary: reports/summary.md",
         "- Runtime Log: reports/runtime.log",
+        "- Conversations: reports/latest_conversations.md",
         "",
         "## Aggregate",
         f"- 총 케이스 수: {total}",
@@ -122,15 +126,62 @@ def _build_summary(run_results: list[RunResult]) -> str:
                     f"### {item.pair.case_id}",
                     f"- Question: {item.pair.question}",
                     f"- Answer: {item.pair.answer or '(empty)'}",
+                    f"- Question Echo In Chat: {item.pair.question_echo or '(not verified)'}",
                     f"- Extraction Source: {item.pair.extraction_source}",
                     f"- Overall Score: {item.evaluation.overall_score:.2f}",
                     f"- Needs Human Review: {item.evaluation.needs_human_review}",
                     f"- Reason: {item.evaluation.reason}",
                     f"- Chat Screenshot: {item.pair.chat_screenshot_path}",
+                    f"- Submitted Chat Screenshot: {item.pair.submitted_chat_screenshot_path}",
+                    f"- Answered Chat Screenshot: {item.pair.answered_chat_screenshot_path}",
                     f"- Fullpage Screenshot: {item.pair.full_screenshot_path}",
                     "",
                 ]
             )
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_conversations(run_results: list[RunResult]) -> str:
+    lines = [
+        "# Samsung Rubicon QA Conversations",
+        "",
+        "질문, 채팅 UI에서 확인된 질문 echo, DOM history, 추출 답변, 평가 결과를 함께 저장한 증거 리포트다.",
+        "",
+    ]
+
+    if not run_results:
+        lines.append("- 없음")
+        return "\n".join(lines) + "\n"
+
+    for item in run_results:
+        lines.extend(
+            [
+                f"## {item.pair.case_id}",
+                f"- Question: {item.pair.question}",
+                f"- Question Echo In Chat: {item.pair.question_echo or '(not verified)'}",
+                f"- Extracted Answer: {item.pair.answer or '(empty)'}",
+                f"- Extraction Source: {item.pair.extraction_source}",
+                f"- Overall Score: {item.evaluation.overall_score:.2f}",
+                f"- Needs Human Review: {item.evaluation.needs_human_review}",
+                f"- Reason: {item.evaluation.reason}",
+                f"- Fix Suggestion: {item.evaluation.fix_suggestion}",
+                f"- Submitted Chat Screenshot: {item.pair.submitted_chat_screenshot_path}",
+                f"- Answered Chat Screenshot: {item.pair.answered_chat_screenshot_path}",
+                f"- Chat Screenshot: {item.pair.chat_screenshot_path}",
+                f"- Fullpage Screenshot: {item.pair.full_screenshot_path}",
+                f"- HTML Fragment: {item.pair.html_fragment_path}",
+                f"- Trace: {item.pair.trace_path}",
+                f"- Video: {item.pair.video_path}",
+                "",
+                "### Message History",
+            ]
+        )
+        if item.pair.message_history:
+            lines.extend(f"- {entry}" for entry in item.pair.message_history)
+        else:
+            lines.append("- (empty)")
+        lines.append("")
 
     return "\n".join(lines) + "\n"
 
