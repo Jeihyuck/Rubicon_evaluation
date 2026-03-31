@@ -13,7 +13,7 @@ jobs:
       HEADLESS: "true"
       DEFAULT_LOCALE: ko-KR
       MAX_QUESTIONS: "5"
-      OPENAI_MODEL: gpt-5
+      OPENAI_MODEL: gpt-4o
       PLAYWRIGHT_TIMEOUT_MS: "30000"
       ANSWER_STABLE_CHECKS: "3"
       ANSWER_STABLE_INTERVAL_SEC: "1.0"
@@ -47,6 +47,9 @@ jobs:
         if: env.ENABLE_OCR_FALLBACK == 'true'
         run: |
           pip install Pillow pytesseract
+
+      - name: Run unit tests
+        run: python -m pytest tests/ -v
 
       - name: Install Playwright Chromium
         run: playwright install --with-deps chromium

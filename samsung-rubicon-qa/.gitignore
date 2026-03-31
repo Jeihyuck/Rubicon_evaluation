@@ -10,6 +10,8 @@ artifacts/chatbox/*.png
 artifacts/chatbox/*.html
 artifacts/video/*
 artifacts/trace/*
+!artifacts/video/.gitkeep
+!artifacts/trace/.gitkeep
 reports/*.log
 reports/latest_results.json
 reports/latest_results.csv
