@@ -16,7 +16,7 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
     json_path = config.reports_dir / "latest_results.json"
     csv_path = config.reports_dir / "latest_results.csv"
     summary_path = config.reports_dir / "summary.md"
-    conversation_path = config.reports_dir / "latest_conversation.md"
+    conversation_path = config.reports_dir / "latest_conversations.md"
 
     nested = [result.to_nested_dict() for result in run_results]
     write_json(json_path, nested)

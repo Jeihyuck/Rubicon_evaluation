@@ -236,3 +236,24 @@ class TestBuildConversation:
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "- 안녕하세요." in content
         assert "- 서비스센터입니다." in content
+
+    def test_conversation_md022_md032_compliance(self):
+        """Generated markdown must satisfy MD022 (blank lines around headings) and MD032 (blank lines around lists)."""
+        results = [_make_result("c01"), _make_result("c02")]
+        from app.report_writer import _build_conversation
+
+        content = _build_conversation(results)
+        lines = content.split("\n")
+        for i, line in enumerate(lines):
+            # MD022: every heading must be followed by a blank line
+            if line.startswith("#"):
+                assert i + 1 < len(lines) and lines[i + 1] == "", (
+                    f"MD022 violation: heading at line {i + 1} ({line!r}) "
+                    f"not followed by blank line; next line={lines[i + 1]!r}"
+                )
+            # MD032: a list item must not immediately follow a heading (blank line required between them)
+            if line.startswith("- ") and i > 0 and lines[i - 1].startswith("#"):
+                raise AssertionError(
+                    f"MD032 violation: list item at line {i + 1} ({line!r}) "
+                    f"immediately follows heading ({lines[i - 1]!r})"
+                )
