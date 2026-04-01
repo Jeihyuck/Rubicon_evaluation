@@ -64,13 +64,14 @@ def _build_summary(run_results: list[RunResult]) -> str:
             [
                 "",
                 "## 최저 점수 케이스",
+                "",
                 f"- case_id: {lowest.pair.case_id}",
                 f"- score: {lowest.evaluation.overall_score:.2f}",
                 f"- reason: {lowest.evaluation.reason}",
             ]
         )
 
-    lines.extend(["", "## 에러 케이스"])
+    lines.extend(["", "## 에러 케이스", ""])
     if not error_cases:
         lines.append("- 없음")
     else:
