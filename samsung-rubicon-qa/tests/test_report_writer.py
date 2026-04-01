@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -155,3 +156,83 @@ class TestBuildSummary:
     def test_empty_results(self):
         summary = _build_summary([])
         assert "총 케이스 수: 0" in summary
+
+
+class TestBuildConversation:
+    """Tests for the per-case evidence conversation report."""
+
+    def test_conversation_report_is_written(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            results = [_make_result("c01")]
+            paths = write_reports(config, results)
+            assert "conversation" in paths
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+            assert "c01" in content
+
+    def test_conversation_contains_question(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            results = [_make_result("c01")]
+            paths = write_reports(config, results)
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+            assert "배터리 교체는 어디서?" in content
+
+    def test_conversation_echo_not_verified(self):
+        """Echo field shows '(not verified)' when user_message_echo_verified is False."""
+
+        result = _make_result("c01")
+        result = replace(
+            result,
+            pair=replace(result.pair, user_message_echo_verified=False),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Question Echo In Chat: (not verified)" in content
+
+    def test_conversation_echo_verified_shows_question(self):
+        """Echo field shows the question text when user_message_echo_verified is True."""
+
+        result = _make_result("c01")
+        result = replace(
+            result,
+            pair=replace(result.pair, user_message_echo_verified=True),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Question Echo In Chat: 배터리 교체는 어디서?" in content
+
+    def test_conversation_empty_history(self):
+        """Message History shows '(empty)' when no history is captured."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            results = [_make_result("c01")]
+            paths = write_reports(config, results)
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "### Message History" in content
+        assert "- (empty)" in content
+
+    def test_conversation_populated_history(self):
+        """Message History lists each message when history is captured."""
+
+        result = _make_result("c01")
+        result = replace(
+            result,
+            pair=replace(result.pair, message_history=["안녕하세요.", "서비스센터입니다."]),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "- 안녕하세요." in content
+        assert "- 서비스센터입니다." in content

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -81,14 +81,12 @@ class TestExtractedPair:
         assert pair.user_message_echo_verified is False
 
     def test_invalid_capture_status(self):
-        from dataclasses import replace
         pair = _make_pair()
         invalid = replace(pair, status="invalid_capture", input_verified=False)
         assert invalid.status == "invalid_capture"
         assert invalid.input_verified is False
 
     def test_echo_verified_field(self):
-        from dataclasses import replace
         pair = _make_pair()
         echoed = replace(pair, user_message_echo_verified=True)
         assert echoed.user_message_echo_verified is True
@@ -135,3 +133,32 @@ class TestRunResult:
         case_keys = set(asdict(_make_test_case()).keys())
         all_expected = case_keys | pair_keys | eval_keys
         assert all_expected.issubset(flat.keys())
+
+
+class TestExtractedPairNewFields:
+    """Tests for new ExtractedPair fields: message_history and after_answer_screenshot_path."""
+
+    def test_message_history_defaults_to_empty_list(self):
+        pair = _make_pair()
+        assert pair.message_history == []
+
+    def test_after_answer_screenshot_path_defaults_to_empty(self):
+        pair = _make_pair()
+        assert pair.after_answer_screenshot_path == ""
+
+    def test_message_history_stored_correctly(self):
+
+        pair = replace(_make_pair(), message_history=["질문입니다.", "답변입니다."])
+        assert pair.message_history == ["질문입니다.", "답변입니다."]
+
+    def test_after_answer_screenshot_path_stored(self):
+
+        pair = replace(_make_pair(), after_answer_screenshot_path="artifacts/chatbox/case01_after_answer.png")
+        assert pair.after_answer_screenshot_path == "artifacts/chatbox/case01_after_answer.png"
+
+    def test_message_history_serialised_in_nested_dict(self):
+
+        pair = replace(_make_pair(), message_history=["msg1"])
+        result = RunResult(test_case=_make_test_case(), pair=pair, evaluation=_make_eval())
+        nested = result.to_nested_dict()
+        assert nested["pair"]["message_history"] == ["msg1"]

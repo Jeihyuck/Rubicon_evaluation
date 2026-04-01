@@ -44,8 +44,10 @@ class ExtractedPair:
     input_verified: bool = False
     input_method_used: str = ""
     before_send_screenshot_path: str = ""
+    after_answer_screenshot_path: str = ""
     font_fix_applied: bool = False
     user_message_echo_verified: bool = False
+    message_history: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

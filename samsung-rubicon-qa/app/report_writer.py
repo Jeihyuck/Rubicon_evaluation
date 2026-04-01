@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 from statistics import mean
-from typing import Any
 
 from app.config import AppConfig
 from app.models import RunResult
@@ -12,11 +11,12 @@ from app.utils import write_json
 
 
 def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, str]:
-    """Write the latest JSON, CSV, and Markdown report files."""
+    """Write the latest JSON, CSV, Markdown summary, and conversation report files."""
 
     json_path = config.reports_dir / "latest_results.json"
     csv_path = config.reports_dir / "latest_results.csv"
     summary_path = config.reports_dir / "summary.md"
+    conversation_path = config.reports_dir / "latest_conversation.md"
 
     nested = [result.to_nested_dict() for result in run_results]
     write_json(json_path, nested)
@@ -29,11 +29,63 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
         writer.writerows(flat_rows)
 
     summary_path.write_text(_build_summary(run_results), encoding="utf-8")
+    conversation_path.write_text(_build_conversation(run_results), encoding="utf-8")
     return {
         "json": str(json_path),
         "csv": str(csv_path),
         "summary": str(summary_path),
+        "conversation": str(conversation_path),
     }
+
+
+def _build_conversation(run_results: list[RunResult]) -> str:
+    """Build a per-case evidence report with question, echo, history, answer, and scores."""
+
+    lines = [
+        "# Samsung Rubicon QA Conversations",
+        "",
+        "질문, 채팅 UI에서 확인된 질문 echo, DOM history, 추출 답변, 평가 결과를 함께 저장한 증거 리포트다.",
+    ]
+
+    for item in run_results:
+        pair = item.pair
+        ev = item.evaluation
+
+        echo_text = pair.question if pair.user_message_echo_verified else "(not verified)"
+
+        lines.extend(
+            [
+                "",
+                f"## {pair.case_id}",
+                f"- Question: {pair.question}",
+                f"- Question Echo In Chat: {echo_text}",
+                f"- Extracted Answer: {pair.answer or '(none)'}",
+                f"- Extraction Source: {pair.extraction_source}",
+                f"- Overall Score: {ev.overall_score}",
+                f"- Needs Human Review: {ev.needs_human_review}",
+                f"- Reason: {ev.reason}",
+                f"- Fix Suggestion: {ev.fix_suggestion}",
+                f"- Submitted Chat Screenshot: {pair.before_send_screenshot_path or '(none)'}",
+                f"- Answered Chat Screenshot: {pair.after_answer_screenshot_path or '(none)'}",
+                f"- Chat Screenshot: {pair.chat_screenshot_path or '(none)'}",
+                f"- Fullpage Screenshot: {pair.full_screenshot_path or '(none)'}",
+                f"- HTML Fragment: {pair.html_fragment_path or '(none)'}",
+                f"- Trace: {pair.trace_path or '(none)'}",
+                f"- Video: {pair.video_path or '(none)'}",
+                "",
+                "### Message History",
+            ]
+        )
+
+        if pair.message_history:
+            for msg in pair.message_history:
+                lines.append(f"- {msg}")
+        else:
+            lines.append("- (empty)")
+
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def _build_summary(run_results: list[RunResult]) -> str:

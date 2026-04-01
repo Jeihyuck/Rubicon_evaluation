@@ -370,7 +370,9 @@ def verify_user_message_echo(context: ResolvedChatContext, question: str, logger
 
     After the question is sent, the chat should echo it back as a user-side
     message element.  This check tries specific user-message selectors first,
-    then falls back to searching all chat history nodes for the question text.
+    then falls back to searching all chat history nodes for the question text,
+    and finally does a full JavaScript text-scan of the entire scope so that
+    Sprinklr-specific class names or shadow DOM structures are not a blocker.
     The check is best-effort: a ``False`` result is logged but does not by
     itself fail the case (it contributes to the overall verification signal).
     """
@@ -413,6 +415,24 @@ def verify_user_message_echo(context: ResolvedChatContext, question: str, logger
                     continue
         except Exception:
             continue
+
+    # 3. Last resort: JavaScript full-text scan of the entire scope.
+    #    This catches Sprinklr widget structures that use opaque class names or
+    #    shadow DOM — the text of every visible element is searched for the
+    #    question string without requiring specific CSS selectors.
+    try:
+        js = (
+            "() => {"
+            "  const el = document.body || document.documentElement;"
+            "  return el ? (el.innerText || el.textContent || '') : '';"
+            "}"
+        )
+        full_text = scope.evaluate(js)
+        if full_text and question_norm in " ".join(str(full_text).split()):
+            logger.info("[ECHO] user message echo confirmed via JS full-scope text scan")
+            return True
+    except Exception as exc:
+        logger.debug("[ECHO] JS text scan failed: %s", exc)
 
     logger.warning("[ECHO] user message echo not found in chat DOM (best-effort)")
     return False
@@ -764,6 +784,8 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     before_send_screenshot_path = ""
     font_fix_applied = False
     user_message_echo_verified = False
+    message_history: list[str] = []
+    after_answer_screenshot_path = ""
 
     try:
         open_homepage(page)
@@ -806,10 +828,19 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 runtime.config,
                 runtime.logger,
             )
+            # Record the chatbox screenshot taken at the "after_answer" stage
+            # so it can be included in the conversation report.
+            _aa_chatbox = (
+                runtime.config.chatbox_dir
+                / f"{runtime.current_case_timestamp}_{sanitize_filename(test_case.id)}_after_answer.png"
+            )
+            if _aa_chatbox.exists():
+                after_answer_screenshot_path = str(_aa_chatbox)
 
             artifacts = capture_artifacts(page, context, test_case.id)
 
             dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
+            message_history = dom_payload.get("history", [])
             if dom_payload["success"]:
                 answer = dom_payload["answer"]
                 extraction_source = "dom"
@@ -870,7 +901,9 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         input_verified=input_verified,
         input_method_used=input_method_used,
         before_send_screenshot_path=before_send_screenshot_path,
+        after_answer_screenshot_path=after_answer_screenshot_path,
         font_fix_applied=font_fix_applied,
         user_message_echo_verified=user_message_echo_verified,
+        message_history=message_history,
     )
 
