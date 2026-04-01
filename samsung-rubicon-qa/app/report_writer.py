@@ -16,7 +16,7 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
     json_path = config.reports_dir / "latest_results.json"
     csv_path = config.reports_dir / "latest_results.csv"
     summary_path = config.reports_dir / "summary.md"
-    conversation_path = config.reports_dir / "latest_conversations.md"
+    conversation_path = config.reports_dir / "latest_conversation.md"
 
     nested = [result.to_nested_dict() for result in run_results]
     write_json(json_path, nested)
@@ -52,6 +52,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
         ev = item.evaluation
 
         echo_text = pair.question if pair.user_message_echo_verified else "(not verified)"
+        new_response = bool(pair.answer and pair.status != "invalid_capture")
 
         lines.extend(
             [
@@ -59,6 +60,8 @@ def _build_conversation(run_results: list[RunResult]) -> str:
                 f"## {pair.case_id}",
                 "",
                 f"- Question: {pair.question}",
+                f"- Input Verified: {pair.input_verified}",
+                f"- New Bot Response Received: {new_response}",
                 f"- Question Echo In Chat: {echo_text}",
                 f"- Extracted Answer: {pair.answer or '(none)'}",
                 f"- Extraction Source: {pair.extraction_source}",
