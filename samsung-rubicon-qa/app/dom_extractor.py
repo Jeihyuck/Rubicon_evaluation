@@ -9,35 +9,40 @@ from app.models import ResolvedChatContext
 from app.utils import build_locator, ensure_parent, locator_text
 
 
-def count_bot_messages(chat_context: ResolvedChatContext) -> int:
-    """Count bot message nodes matching the configured locator candidates."""
+def extract_bot_message_texts(chat_context: ResolvedChatContext) -> list[str]:
+    """Extract normalized bot message texts from DOM locators."""
 
-    max_count = 0
-    for candidate in chat_context.bot_message_candidates:
-        locator = build_locator(chat_context.scope, candidate)
-        try:
-            max_count = max(max_count, locator.count())
-        except Exception:
-            continue
-    return max_count
-
-
-def extract_last_bot_message_text(chat_context: ResolvedChatContext) -> str:
-    """Extract the last visible bot response text from DOM locators."""
-
+    messages: list[str] = []
+    seen: set[str] = set()
     for candidate in chat_context.bot_message_candidates:
         locator = build_locator(chat_context.scope, candidate)
         try:
             count = locator.count()
         except Exception:
             continue
-        if count <= 0:
-            continue
-        for index in range(count - 1, -1, -1):
+        for index in range(count):
             text = locator_text(locator.nth(index))
-            if text:
-                return text
-    return ""
+            if not text:
+                continue
+            key = f"{index}:{text}"
+            if key in seen:
+                continue
+            seen.add(key)
+            messages.append(text)
+    return messages
+
+
+def count_bot_messages(chat_context: ResolvedChatContext) -> int:
+    """Count bot message nodes matching the configured locator candidates."""
+
+    return len(extract_bot_message_texts(chat_context))
+
+
+def extract_last_bot_message_text(chat_context: ResolvedChatContext) -> str:
+    """Extract the last visible bot response text from DOM locators."""
+
+    bot_messages = extract_bot_message_texts(chat_context)
+    return bot_messages[-1] if bot_messages else ""
 
 
 def extract_message_history(chat_context: ResolvedChatContext) -> list[str]:

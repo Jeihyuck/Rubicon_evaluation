@@ -46,13 +46,21 @@ def run(project_root: Path | None = None) -> list[RunResult]:
 
             evaluation = (
                 evaluate_pair(config, test_case, pair, logger)
-                if pair.answer and pair.input_verified and pair.status != "invalid_capture"
+                if pair.answer
+                and pair.input_verified
+                and pair.new_bot_response_detected
+                and pair.status == "passed"
                 else fallback_evaluation()
             )
             results.append(RunResult(test_case=test_case, pair=pair, evaluation=evaluation))
     finally:
         browser_manager.stop()
 
-    write_reports(config, results)
+    report_paths = write_reports(config, results)
     logger.info("report written")
+    logger.info("check results in this order:")
+    logger.info("1. %s", report_paths["conversation"])
+    logger.info("2. %s", report_paths["json"])
+    logger.info("3. %s", config.chatbox_dir)
+    logger.info("4. %s", report_paths["summary"])
     return results

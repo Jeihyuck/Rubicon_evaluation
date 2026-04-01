@@ -35,6 +35,7 @@ class ExtractedPair:
     extraction_confidence: float
     response_ms: int
     status: Literal["passed", "failed", "invalid_capture"]
+    reason: str = ""
     error_message: str = ""
     full_screenshot_path: str = ""
     chat_screenshot_path: str = ""
@@ -43,10 +44,18 @@ class ExtractedPair:
     html_fragment_path: str = ""
     input_verified: bool = False
     input_method_used: str = ""
+    opened_chat_screenshot_path: str = ""
+    opened_full_screenshot_path: str = ""
     before_send_screenshot_path: str = ""
+    before_send_full_screenshot_path: str = ""
+    after_send_screenshot_path: str = ""
+    after_send_full_screenshot_path: str = ""
     after_answer_screenshot_path: str = ""
+    after_answer_full_screenshot_path: str = ""
     font_fix_applied: bool = False
     user_message_echo_verified: bool = False
+    new_bot_response_detected: bool = False
+    baseline_menu_detected: bool = False
     message_history: list[str] = field(default_factory=list)
 
 
@@ -90,6 +99,46 @@ class RunResult:
         data.update({f"eval_{key}": value for key, value in asdict(self.evaluation).items()})
         return data
 
+    def to_result_record(self) -> dict[str, Any]:
+        """Build the primary result payload consumed by reports/latest_results.json."""
+
+        return {
+            "run_timestamp": self.pair.run_timestamp,
+            "case_id": self.pair.case_id,
+            "question": self.pair.question,
+            "answer": self.pair.answer,
+            "input_verified": self.pair.input_verified,
+            "input_method_used": self.pair.input_method_used,
+            "user_message_echo_verified": self.pair.user_message_echo_verified,
+            "new_bot_response_detected": self.pair.new_bot_response_detected,
+            "baseline_menu_detected": self.pair.baseline_menu_detected,
+            "status": self.pair.status,
+            "reason": self.pair.reason,
+            "before_send_screenshot_path": self.pair.before_send_screenshot_path,
+            "after_answer_screenshot_path": self.pair.after_answer_screenshot_path,
+            "full_screenshot_path": self.pair.full_screenshot_path,
+            "video_path": self.pair.video_path,
+            "trace_path": self.pair.trace_path,
+            "overall_score": self.evaluation.overall_score,
+            "needs_human_review": self.evaluation.needs_human_review,
+            "page_url": self.pair.page_url,
+            "locale": self.pair.locale,
+            "category": self.pair.category,
+            "response_ms": self.pair.response_ms,
+            "extraction_source": self.pair.extraction_source,
+            "extraction_confidence": self.pair.extraction_confidence,
+            "opened_chat_screenshot_path": self.pair.opened_chat_screenshot_path,
+            "opened_full_screenshot_path": self.pair.opened_full_screenshot_path,
+            "before_send_full_screenshot_path": self.pair.before_send_full_screenshot_path,
+            "after_send_screenshot_path": self.pair.after_send_screenshot_path,
+            "after_send_full_screenshot_path": self.pair.after_send_full_screenshot_path,
+            "after_answer_full_screenshot_path": self.pair.after_answer_full_screenshot_path,
+            "chat_screenshot_path": self.pair.chat_screenshot_path,
+            "html_fragment_path": self.pair.html_fragment_path,
+            "error_message": self.pair.error_message,
+            "evaluation": asdict(self.evaluation),
+        }
+
 
 @dataclass(slots=True)
 class ResolvedChatContext:
@@ -104,6 +153,7 @@ class ResolvedChatContext:
     history_candidates: list[dict[str, Any]]
     loading_candidates: list[dict[str, Any]]
     baseline_bot_count: int = 0
+    baseline_bot_messages: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,12 +63,42 @@ class BrowserManager:
         self.logger = logger
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self._xvfb_process: subprocess.Popen[str] | None = None
+
+    def _ensure_display(self) -> None:
+        """Start Xvfb automatically when headed mode runs without a DISPLAY."""
+
+        if self.config.headless or os.environ.get("DISPLAY"):
+            return
+
+        display = ":99"
+        self.logger.warning("DISPLAY is not set; starting Xvfb on %s", display)
+        self._xvfb_process = subprocess.Popen(
+            ["Xvfb", display, "-screen", "0", "1440x1200x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        os.environ["DISPLAY"] = display
+        time.sleep(1)
 
     def start(self) -> None:
         """Start Playwright and launch Chromium."""
 
+        self._ensure_display()
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self.config.headless)
+        try:
+            self._browser = self._playwright.chromium.launch(headless=self.config.headless)
+        except Exception as exc:
+            message = str(exc)
+            if "Executable doesn't exist" not in message and "browserType.launch" not in message:
+                raise
+            self.logger.warning("Chromium is missing; attempting Playwright install")
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=True,
+            )
+            self._browser = self._playwright.chromium.launch(headless=self.config.headless)
 
     def new_case_session(self, case_id: str) -> CaseBrowserSession:
         """Create a new isolated browser context and page for a single case."""
@@ -97,3 +131,7 @@ class BrowserManager:
             self._browser.close()
         if self._playwright is not None:
             self._playwright.stop()
+        if self._xvfb_process is not None:
+            self._xvfb_process.terminate()
+            self._xvfb_process.wait(timeout=5)
+            self._xvfb_process = None

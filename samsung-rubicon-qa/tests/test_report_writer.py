@@ -93,8 +93,8 @@ class TestWriteReports:
             data = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
             assert isinstance(data, list)
             assert len(data) == 1
-            assert data[0]["test_case"]["id"] == "c01"
-            assert "pair" in data[0]
+            assert data[0]["case_id"] == "c01"
+            assert data[0]["question"] == "배터리 교체는 어디서?"
             assert "evaluation" in data[0]
 
     def test_csv_report_has_expected_columns(self):
@@ -168,6 +168,7 @@ class TestBuildConversation:
             results = [_make_result("c01")]
             paths = write_reports(config, results)
             assert "conversation" in paths
+            assert Path(paths["conversation"]).name == "latest_conversation.md"
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
             assert "c01" in content
 
@@ -180,35 +181,20 @@ class TestBuildConversation:
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
             assert "배터리 교체는 어디서?" in content
 
-    def test_conversation_echo_not_verified(self):
-        """Echo field shows '(not verified)' when user_message_echo_verified is False."""
+    def test_conversation_shows_new_response_flag(self):
+        """Conversation report includes the strict post-baseline response flag."""
 
         result = _make_result("c01")
         result = replace(
             result,
-            pair=replace(result.pair, user_message_echo_verified=False),
+            pair=replace(result.pair, new_bot_response_detected=True),
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             config = _make_config(tmpdir)
             config.ensure_directories()
             paths = write_reports(config, [result])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
-        assert "Question Echo In Chat: (not verified)" in content
-
-    def test_conversation_echo_verified_shows_question(self):
-        """Echo field shows the question text when user_message_echo_verified is True."""
-
-        result = _make_result("c01")
-        result = replace(
-            result,
-            pair=replace(result.pair, user_message_echo_verified=True),
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = _make_config(tmpdir)
-            config.ensure_directories()
-            paths = write_reports(config, [result])
-            content = Path(paths["conversation"]).read_text(encoding="utf-8")
-        assert "Question Echo In Chat: 배터리 교체는 어디서?" in content
+        assert "New Bot Response Detected: True" in content
 
     def test_conversation_empty_history(self):
         """Message History shows '(empty)' when no history is captured."""
@@ -236,6 +222,10 @@ class TestBuildConversation:
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "- 안녕하세요." in content
         assert "- 서비스센터입니다." in content
+
+    def test_summary_mentions_latest_conversation_priority(self):
+        summary = _build_summary([_make_result("c01")])
+        assert "reports/latest_conversation.md" in summary
 
     def test_conversation_md022_md032_compliance(self):
         """Generated markdown must satisfy MD022 (blank lines around headings) and MD032 (blank lines around lists)."""

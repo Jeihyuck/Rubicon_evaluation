@@ -10,7 +10,7 @@ from typing import Any
 from playwright.sync_api import Frame, Locator, Page
 
 from app.config import AppConfig
-from app.dom_extractor import count_bot_messages, extract_dom_payload, extract_last_bot_message_text
+from app.dom_extractor import count_bot_messages, extract_bot_message_texts, extract_dom_payload
 from app.models import BrowserArtifacts, ExtractedPair, ResolvedChatContext, TestCase
 from app.ocr_fallback import extract_text_from_image
 from app.utils import artifact_timestamp, build_locator, compile_regex, first_visible_locator, sanitize_filename, utc_now_timestamp
@@ -94,6 +94,36 @@ KOREAN_FONT_CSS = (
 # Delay (ms / s) after submit to let the UI render the user-message bubble
 ECHO_RENDER_DELAY_MS = 600
 ECHO_RENDER_DELAY_SEC = ECHO_RENDER_DELAY_MS / 1000.0
+
+BASELINE_MENU_TEXTS = [
+    "아래에서 원하는 항목을 선택해 주세요",
+    "구매 상담사 연결",
+    "주문·배송 조회",
+    "모바일 케어플러스",
+    "가전 케어플러스",
+    "서비스 센터",
+    "FAQ",
+]
+
+
+@dataclass(slots=True)
+class SubmissionEvidence:
+    input_verified: bool
+    input_method_used: str
+    before_send_chatbox_path: str
+    before_send_fullpage_path: str
+    after_send_chatbox_path: str
+    after_send_fullpage_path: str
+    user_message_echo_verified: bool
+
+
+@dataclass(slots=True)
+class AnswerWaitResult:
+    answer: str
+    response_ms: int
+    new_bot_response_detected: bool
+    baseline_menu_detected: bool
+    reason: str
 
 
 @dataclass(slots=True)
@@ -359,10 +389,30 @@ def verify_input_text(locator: Locator, question: str, input_type: str) -> bool:
             value = locator.input_value(timeout=1500)
             return value.strip() == question.strip()
         else:
-            text = locator.inner_text(timeout=1500)
+            text = locator.inner_text(timeout=1500) or locator.text_content(timeout=1500) or ""
             return question.strip() in text.strip()
     except Exception:
         return False
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _contains_baseline_menu(text: str) -> bool:
+    normalized = _normalize_text(text)
+    return any(menu_text in normalized for menu_text in BASELINE_MENU_TEXTS)
+
+
+def _is_new_response_candidate(text: str, baseline_messages: list[str]) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if _contains_baseline_menu(normalized):
+        return False
+    if normalized in {_normalize_text(item) for item in baseline_messages}:
+        return False
+    return True
 
 
 def verify_user_message_echo(context: ResolvedChatContext, question: str, logger: Any) -> bool:
@@ -598,6 +648,8 @@ def _capture_stage(
 
     if cb_str:
         logger.info("[ARTIFACT] %s screenshot saved: %s", stage, cb_str)
+    if fp_str:
+        logger.info("[ARTIFACT] %s fullpage saved: %s", stage, fp_str)
 
     return fp_str, cb_str
 
@@ -606,10 +658,10 @@ def submit_question(
     page: Page,
     context: ResolvedChatContext,
     question: str,
-) -> tuple[bool, str, str, bool]:
+) -> SubmissionEvidence:
     """Submit *question* through the resolved chat input with DOM verification.
 
-    Returns ``(input_verified, input_method_used, before_send_chatbox_path, echo_verified)``.
+    Returns structured evidence for the input and send stages.
 
     Three verification steps are performed:
 
@@ -626,7 +678,8 @@ def submit_question(
     """
 
     runtime = _runtime()
-    context.baseline_bot_count = count_bot_messages(context)
+    context.baseline_bot_messages = extract_bot_message_texts(context)
+    context.baseline_bot_count = len(context.baseline_bot_messages)
 
     input_verified, method_used = enter_question_with_verification(
         context.scope, context.input_locator, question, runtime.logger
@@ -644,7 +697,7 @@ def submit_question(
         "[INPUT] verification success: %.60s  (method=%s)", question, method_used
     )
 
-    _, before_send_chatbox = _capture_stage(
+    before_send_fullpage, before_send_chatbox = _capture_stage(
         page,
         context,
         runtime.current_case_id,
@@ -653,6 +706,10 @@ def submit_question(
         runtime.config,
         runtime.logger,
     )
+
+    if not before_send_chatbox or not before_send_fullpage:
+        runtime.logger.error("[VERIFY] before_send evidence missing; capture is invalid")
+        raise RuntimeError("before_send screenshot missing")
 
     if context.send_locator is not None:
         try:
@@ -667,6 +724,16 @@ def submit_question(
 
     runtime.logger.info("question submitted")
 
+    after_send_fullpage, after_send_chatbox = _capture_stage(
+        page,
+        context,
+        runtime.current_case_id,
+        runtime.current_case_timestamp,
+        "after_send",
+        runtime.config,
+        runtime.logger,
+    )
+
     # Short pause to allow the UI to render the user-message bubble before echo check
     try:
         if hasattr(context.scope, "wait_for_timeout"):
@@ -677,7 +744,15 @@ def submit_question(
         pass
 
     echo_verified = verify_user_message_echo(context, question, runtime.logger)
-    return input_verified, method_used, before_send_chatbox, echo_verified
+    return SubmissionEvidence(
+        input_verified=input_verified,
+        input_method_used=method_used,
+        before_send_chatbox_path=before_send_chatbox,
+        before_send_fullpage_path=before_send_fullpage,
+        after_send_chatbox_path=after_send_chatbox,
+        after_send_fullpage_path=after_send_fullpage,
+        user_message_echo_verified=echo_verified,
+    )
 
 
 def _loading_visible(context: ResolvedChatContext) -> bool:
@@ -688,8 +763,8 @@ def _loading_visible(context: ResolvedChatContext) -> bool:
     return False
 
 
-def wait_for_answer_completion(context: ResolvedChatContext) -> tuple[str, int]:
-    """Wait until the last bot answer becomes stable or timeout occurs."""
+def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult:
+    """Wait until a post-baseline bot answer becomes stable or timeout occurs."""
 
     runtime = _runtime()
     started = time.perf_counter()
@@ -697,28 +772,55 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> tuple[str, int]:
     stable_checks = 0
     previous_text = ""
     latest_text = ""
+    baseline_menu_detected = False
 
     while time.perf_counter() < deadline:
-        current_count = count_bot_messages(context)
-        latest_text = extract_last_bot_message_text(context)
-        if latest_text and current_count > context.baseline_bot_count:
-            if latest_text == previous_text:
-                stable_checks += 1
-            else:
-                stable_checks = 1
-                previous_text = latest_text
-            if stable_checks >= runtime.config.answer_stable_checks and not _loading_visible(context):
-                response_ms = int((time.perf_counter() - started) * 1000)
-                runtime.logger.info("answer stabilized")
-                return latest_text, response_ms
+        bot_messages = extract_bot_message_texts(context)
+        current_count = len(bot_messages)
+        if current_count > context.baseline_bot_count:
+            new_messages = bot_messages[context.baseline_bot_count : current_count]
+            candidate_messages = [
+                message for message in new_messages if _is_new_response_candidate(message, context.baseline_bot_messages)
+            ]
+            if candidate_messages:
+                latest_text = candidate_messages[-1]
+            elif any(_contains_baseline_menu(message) or _normalize_text(message) in {_normalize_text(item) for item in context.baseline_bot_messages} for message in new_messages):
+                baseline_menu_detected = True
+                latest_text = ""
+            if latest_text:
+                if latest_text == previous_text:
+                    stable_checks += 1
+                else:
+                    stable_checks = 1
+                    previous_text = latest_text
+                if stable_checks >= runtime.config.answer_stable_checks and not _loading_visible(context):
+                    response_ms = int((time.perf_counter() - started) * 1000)
+                    runtime.logger.info("answer stabilized")
+                    return AnswerWaitResult(
+                        answer=latest_text,
+                        response_ms=response_ms,
+                        new_bot_response_detected=True,
+                        baseline_menu_detected=baseline_menu_detected,
+                        reason="",
+                    )
 
         if hasattr(context.scope, "wait_for_timeout"):
             context.scope.wait_for_timeout(int(runtime.config.answer_stable_interval_sec * 1000))
         else:
             time.sleep(runtime.config.answer_stable_interval_sec)
 
-    runtime.logger.info("answer stabilized")
-    return latest_text, int((time.perf_counter() - started) * 1000)
+    runtime.logger.info("answer wait finished without a valid new response")
+    if baseline_menu_detected:
+        reason = "Baseline menu or CTA text only appeared after send"
+    else:
+        reason = "New bot response was not detected after the baseline message count"
+    return AnswerWaitResult(
+        answer="",
+        response_ms=int((time.perf_counter() - started) * 1000),
+        new_bot_response_detected=False,
+        baseline_menu_detected=baseline_menu_detected,
+        reason=reason,
+    )
 
 
 def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: str) -> BrowserArtifacts:
@@ -778,14 +880,23 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     extraction_confidence = 0.0
     response_ms = 0
     status = "passed"
+    reason = ""
     error_message = ""
     input_verified = False
     input_method_used = ""
+    opened_chat_screenshot_path = ""
+    opened_full_screenshot_path = ""
     before_send_screenshot_path = ""
+    before_send_full_screenshot_path = ""
+    after_send_screenshot_path = ""
+    after_send_full_screenshot_path = ""
     font_fix_applied = False
     user_message_echo_verified = False
+    new_bot_response_detected = False
+    baseline_menu_detected = False
     message_history: list[str] = []
     after_answer_screenshot_path = ""
+    after_answer_full_screenshot_path = ""
 
     try:
         open_homepage(page)
@@ -793,7 +904,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         dismiss_popups(page)
         open_rubicon_widget(page)
 
-        _capture_stage(
+        opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
             page,
             None,
             test_case.id,
@@ -804,22 +915,38 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         )
 
         context = resolve_chat_context(page)
-        input_verified, input_method_used, before_send_screenshot_path, user_message_echo_verified = submit_question(
-            page, context, test_case.question
+        opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
+            page,
+            context,
+            test_case.id,
+            runtime.current_case_timestamp,
+            "opened",
+            runtime.config,
+            runtime.logger,
         )
 
-        # Core verification gate: DOM value check (input_verified) is mandatory.
-        # The before-send screenshot is captured inside submit_question already.
-        # Echo check is best-effort; a failure is logged but not alone sufficient
-        # to invalidate the capture — the DOM verification is the hard gate.
-        if not input_verified:
-            status = "invalid_capture"
-            error_message = "DOM input verification failed — question was not confirmed in input element"
-            runtime.logger.error("[VERIFY] invalid capture: DOM input verification failed for %s", test_case.id)
-        else:
-            answer, response_ms = wait_for_answer_completion(context)
+        submission = submit_question(page, context, test_case.question)
+        input_verified = submission.input_verified
+        input_method_used = submission.input_method_used
+        before_send_screenshot_path = submission.before_send_chatbox_path
+        before_send_full_screenshot_path = submission.before_send_fullpage_path
+        after_send_screenshot_path = submission.after_send_chatbox_path
+        after_send_full_screenshot_path = submission.after_send_fullpage_path
+        user_message_echo_verified = submission.user_message_echo_verified
 
-            _capture_stage(
+        if not input_verified or not before_send_screenshot_path or not before_send_full_screenshot_path:
+            status = "invalid_capture"
+            reason = "Question input was not verified or before_send evidence is missing"
+            error_message = reason
+            runtime.logger.error("[VERIFY] invalid capture before send for %s", test_case.id)
+        else:
+            wait_result = wait_for_answer_completion(context)
+            answer = wait_result.answer
+            response_ms = wait_result.response_ms
+            new_bot_response_detected = wait_result.new_bot_response_detected
+            baseline_menu_detected = wait_result.baseline_menu_detected
+
+            after_answer_full_screenshot_path, after_answer_screenshot_path = _capture_stage(
                 page,
                 context,
                 test_case.id,
@@ -828,21 +955,16 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 runtime.config,
                 runtime.logger,
             )
-            # Record the chatbox screenshot taken at the "after_answer" stage
-            # so it can be included in the conversation report.
-            _aa_chatbox = (
-                runtime.config.chatbox_dir
-                / f"{runtime.current_case_timestamp}_{sanitize_filename(test_case.id)}_after_answer.png"
-            )
-            if _aa_chatbox.exists():
-                after_answer_screenshot_path = str(_aa_chatbox)
 
             artifacts = capture_artifacts(page, context, test_case.id)
 
             dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
             message_history = dom_payload.get("history", [])
-            if dom_payload["success"]:
-                answer = dom_payload["answer"]
+            if not new_bot_response_detected:
+                status = "invalid_capture"
+                reason = wait_result.reason
+                error_message = wait_result.reason
+            elif answer:
                 extraction_source = "dom"
                 extraction_confidence = 1.0
                 runtime.logger.info("DOM extracted")
@@ -855,14 +977,20 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                     runtime.logger.info("OCR fallback used")
 
             if not answer:
-                raise RuntimeError("No answer text could be extracted from DOM or OCR")
+                status = "invalid_capture"
+                reason = reason or "No new answer text could be extracted after send"
+                error_message = error_message or reason
+            elif status == "passed":
+                reason = "Validated input, detected a new bot response after baseline, and completed evaluation gating"
     except RuntimeError as exc:
         # RuntimeError raised by submit_question means input was never verified
         err_str = str(exc)
-        if "not verified" in err_str:
+        if "not verified" in err_str or "before_send screenshot missing" in err_str:
             status = "invalid_capture"
+            reason = err_str
         else:
             status = "failed"
+            reason = err_str
         error_message = err_str
         runtime.logger.error("exception details: %s", exc)
         try:
@@ -872,6 +1000,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             pass
     except Exception as exc:
         status = "failed"
+        reason = str(exc)
         error_message = str(exc)
         runtime.logger.exception("exception details: %s", exc)
         try:
@@ -892,18 +1021,27 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         extraction_confidence=extraction_confidence,
         response_ms=response_ms,
         status=status,
+        reason=reason,
         error_message=error_message,
-        full_screenshot_path=str(artifacts.fullpage_screenshot or ""),
-        chat_screenshot_path=str(artifacts.chatbox_screenshot or ""),
+        full_screenshot_path=after_answer_full_screenshot_path or str(artifacts.fullpage_screenshot or ""),
+        chat_screenshot_path=after_answer_screenshot_path or str(artifacts.chatbox_screenshot or ""),
         video_path="",
         trace_path="",
         html_fragment_path=str(artifacts.html_fragment_path or runtime.latest_html_fragment_path or ""),
         input_verified=input_verified,
         input_method_used=input_method_used,
+        opened_chat_screenshot_path=opened_chat_screenshot_path,
+        opened_full_screenshot_path=opened_full_screenshot_path,
         before_send_screenshot_path=before_send_screenshot_path,
+        before_send_full_screenshot_path=before_send_full_screenshot_path,
+        after_send_screenshot_path=after_send_screenshot_path,
+        after_send_full_screenshot_path=after_send_full_screenshot_path,
         after_answer_screenshot_path=after_answer_screenshot_path,
+        after_answer_full_screenshot_path=after_answer_full_screenshot_path,
         font_fix_applied=font_fix_applied,
         user_message_echo_verified=user_message_echo_verified,
+        new_bot_response_detected=new_bot_response_detected,
+        baseline_menu_detected=baseline_menu_detected,
         message_history=message_history,
     )
 

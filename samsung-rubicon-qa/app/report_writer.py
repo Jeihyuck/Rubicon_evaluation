@@ -16,10 +16,10 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
     json_path = config.reports_dir / "latest_results.json"
     csv_path = config.reports_dir / "latest_results.csv"
     summary_path = config.reports_dir / "summary.md"
-    conversation_path = config.reports_dir / "latest_conversations.md"
+    conversation_path = config.reports_dir / "latest_conversation.md"
 
-    nested = [result.to_nested_dict() for result in run_results]
-    write_json(json_path, nested)
+    records = [result.to_result_record() for result in run_results]
+    write_json(json_path, records)
 
     flat_rows = [result.to_flat_dict() for result in run_results]
     fieldnames = sorted({key for row in flat_rows for key in row.keys()})
@@ -39,37 +39,46 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
 
 
 def _build_conversation(run_results: list[RunResult]) -> str:
-    """Build a per-case evidence report with question, echo, history, answer, and scores."""
+    """Build the main per-case evidence report for human review."""
 
     lines = [
-        "# Samsung Rubicon QA Conversations",
+        "# Samsung Rubicon QA Latest Conversation",
         "",
-        "질문, 채팅 UI에서 확인된 질문 echo, DOM history, 추출 답변, 평가 결과를 함께 저장한 증거 리포트다.",
+        "가장 먼저 확인해야 할 파일이다.",
+        "이 파일에 질문, 입력 검증 여부, 새 응답 여부, 실제 답변, 평가 결과, 스크린샷 경로를 함께 기록한다.",
     ]
 
     for item in run_results:
         pair = item.pair
         ev = item.evaluation
 
-        echo_text = pair.question if pair.user_message_echo_verified else "(not verified)"
-
         lines.extend(
             [
                 "",
                 f"## {pair.case_id}",
                 "",
+                f"- Status: {pair.status}",
                 f"- Question: {pair.question}",
-                f"- Question Echo In Chat: {echo_text}",
-                f"- Extracted Answer: {pair.answer or '(none)'}",
-                f"- Extraction Source: {pair.extraction_source}",
+                f"- Input Verified: {pair.input_verified}",
+                f"- Input Method Used: {pair.input_method_used or '(none)'}",
+                f"- User Message Echo Verified: {pair.user_message_echo_verified}",
+                f"- New Bot Response Detected: {pair.new_bot_response_detected}",
+                f"- Baseline Menu Detected: {pair.baseline_menu_detected}",
+                f"- Capture Reason: {pair.reason or '(none)'}",
+                f"- Actual Answer: {pair.answer or '(none)'}",
                 f"- Overall Score: {ev.overall_score}",
                 f"- Needs Human Review: {ev.needs_human_review}",
-                f"- Reason: {ev.reason}",
-                f"- Fix Suggestion: {ev.fix_suggestion}",
-                f"- Submitted Chat Screenshot: {pair.before_send_screenshot_path or '(none)'}",
-                f"- Answered Chat Screenshot: {pair.after_answer_screenshot_path or '(none)'}",
-                f"- Chat Screenshot: {pair.chat_screenshot_path or '(none)'}",
-                f"- Fullpage Screenshot: {pair.full_screenshot_path or '(none)'}",
+                f"- Evaluation Reason: {ev.reason}",
+                f"- Evaluation Fix Suggestion: {ev.fix_suggestion}",
+                f"- Opened Chat Screenshot: {pair.opened_chat_screenshot_path or '(none)'}",
+                f"- Opened Fullpage Screenshot: {pair.opened_full_screenshot_path or '(none)'}",
+                f"- Before Send Chat Screenshot: {pair.before_send_screenshot_path or '(none)'}",
+                f"- Before Send Fullpage Screenshot: {pair.before_send_full_screenshot_path or '(none)'}",
+                f"- After Send Chat Screenshot: {pair.after_send_screenshot_path or '(none)'}",
+                f"- After Send Fullpage Screenshot: {pair.after_send_full_screenshot_path or '(none)'}",
+                f"- After Answer Chat Screenshot: {pair.after_answer_screenshot_path or '(none)'}",
+                f"- After Answer Fullpage Screenshot: {pair.after_answer_full_screenshot_path or '(none)'}",
+                f"- Primary Full Screenshot: {pair.full_screenshot_path or '(none)'}",
                 f"- HTML Fragment: {pair.html_fragment_path or '(none)'}",
                 f"- Trace: {pair.trace_path or '(none)'}",
                 f"- Video: {pair.video_path or '(none)'}",
@@ -93,10 +102,12 @@ def _build_conversation(run_results: list[RunResult]) -> str:
 def _build_summary(run_results: list[RunResult]) -> str:
     total = len(run_results)
     successes = sum(1 for item in run_results if item.pair.status == "passed")
-    failures = total - successes
+    invalid_captures = sum(1 for item in run_results if item.pair.status == "invalid_capture")
+    failures = sum(1 for item in run_results if item.pair.status == "failed")
     dom_successes = sum(1 for item in run_results if item.pair.extraction_source == "dom")
     ocr_used = sum(1 for item in run_results if item.pair.extraction_source == "ocr")
     human_review = sum(1 for item in run_results if item.evaluation.needs_human_review)
+    new_response_detected = sum(1 for item in run_results if item.pair.new_bot_response_detected)
     avg_score = mean(item.evaluation.overall_score for item in run_results) if run_results else 0.0
     lowest = min(run_results, key=lambda item: item.evaluation.overall_score, default=None)
     error_cases = [item for item in run_results if item.pair.error_message]
@@ -104,11 +115,17 @@ def _build_summary(run_results: list[RunResult]) -> str:
     lines = [
         "# Samsung Rubicon QA Summary",
         "",
+        "결과 확인 우선순위: reports/latest_conversation.md -> reports/latest_results.json -> artifacts/chatbox/STAR_before_send.png 및 STAR_after_answer.png 패턴 -> reports/summary.md",
+        "",
+        "## 집계",
+        "",
         f"- 총 케이스 수: {total}",
         f"- 성공 수: {successes}",
         f"- 실패 수: {failures}",
+        f"- invalid_capture 수: {invalid_captures}",
         f"- DOM 추출 성공 수: {dom_successes}",
         f"- OCR fallback 사용 수: {ocr_used}",
+        f"- baseline 이후 새 응답 감지 수: {new_response_detected}",
         f"- 평균 overall score: {avg_score:.2f}",
         f"- human review 필요 건수: {human_review}",
     ]
@@ -132,4 +149,4 @@ def _build_summary(run_results: list[RunResult]) -> str:
         for item in error_cases:
             lines.append(f"- {item.pair.case_id}: {item.pair.error_message}")
 
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines).rstrip() + "\n"

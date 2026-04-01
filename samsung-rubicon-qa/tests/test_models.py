@@ -68,6 +68,7 @@ class TestTestCase:
 class TestExtractedPair:
     def test_default_optional_fields(self):
         pair = _make_pair()
+        assert pair.reason == ""
         assert pair.error_message == ""
         assert pair.full_screenshot_path == ""
         assert pair.chat_screenshot_path == ""
@@ -76,9 +77,16 @@ class TestExtractedPair:
         assert pair.html_fragment_path == ""
         assert pair.input_verified is False
         assert pair.input_method_used == ""
+        assert pair.opened_chat_screenshot_path == ""
+        assert pair.opened_full_screenshot_path == ""
         assert pair.before_send_screenshot_path == ""
+        assert pair.before_send_full_screenshot_path == ""
+        assert pair.after_send_screenshot_path == ""
+        assert pair.after_send_full_screenshot_path == ""
         assert pair.font_fix_applied is False
         assert pair.user_message_echo_verified is False
+        assert pair.new_bot_response_detected is False
+        assert pair.baseline_menu_detected is False
 
     def test_invalid_capture_status(self):
         pair = _make_pair()
@@ -106,6 +114,19 @@ class TestRunResult:
         assert nested["test_case"]["id"] == "c01"
         assert nested["pair"]["answer"] == "서비스센터에서 가능합니다."
         assert nested["evaluation"]["overall_score"] == 0.9
+
+    def test_to_result_record_structure(self):
+        result = RunResult(
+            test_case=_make_test_case(),
+            pair=_make_pair(),
+            evaluation=_make_eval(),
+        )
+        record = result.to_result_record()
+        assert record["case_id"] == "c01"
+        assert record["question"] == "배터리 교체는 어디서?"
+        assert record["answer"] == "서비스센터에서 가능합니다."
+        assert record["overall_score"] == 0.9
+        assert record["needs_human_review"] is False
 
     def test_to_flat_dict_structure(self):
         result = RunResult(
@@ -145,6 +166,14 @@ class TestExtractedPairNewFields:
     def test_after_answer_screenshot_path_defaults_to_empty(self):
         pair = _make_pair()
         assert pair.after_answer_screenshot_path == ""
+
+    def test_new_bot_response_detected_defaults_to_false(self):
+        pair = _make_pair()
+        assert pair.new_bot_response_detected is False
+
+    def test_baseline_menu_detected_defaults_to_false(self):
+        pair = _make_pair()
+        assert pair.baseline_menu_detected is False
 
     def test_message_history_stored_correctly(self):
 
