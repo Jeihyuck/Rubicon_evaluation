@@ -194,7 +194,7 @@ class TestBuildConversation:
             config.ensure_directories()
             paths = write_reports(config, [result])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
-        assert "New Bot Response Received: True" in content
+        assert "New Bot Response Detected: True" in content
 
     def test_conversation_contains_required_labels(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -202,9 +202,14 @@ class TestBuildConversation:
             config.ensure_directories()
             paths = write_reports(config, [_make_result("c01")])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Input DOM Verified:" in content
+        assert "Submit Effect Verified:" in content
         assert "Input Method:" in content
-        assert "Question Echo In Chat:" in content
-        assert "Extracted Answer:" in content
+        assert "Submit Method Used:" in content
+        assert "User Message Echo Verified:" in content
+        assert "New Bot Response Detected:" in content
+        assert "Actual Answer:" in content
+        assert "Capture Reason:" in content
         assert "Submitted Chat Screenshot:" in content
         assert "Answered Chat Screenshot:" in content
         assert "Fullpage Screenshot:" in content

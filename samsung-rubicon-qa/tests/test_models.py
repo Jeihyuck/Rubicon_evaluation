@@ -75,8 +75,11 @@ class TestExtractedPair:
         assert pair.video_path == ""
         assert pair.trace_path == ""
         assert pair.html_fragment_path == ""
+        assert pair.input_dom_verified is False
+        assert pair.submit_effect_verified is False
         assert pair.input_verified is False
         assert pair.input_method_used == ""
+        assert pair.submit_method_used == "unknown"
         assert pair.opened_chat_screenshot_path == ""
         assert pair.opened_full_screenshot_path == ""
         assert pair.before_send_screenshot_path == ""
@@ -125,6 +128,8 @@ class TestRunResult:
         assert record["case_id"] == "c01"
         assert record["question"] == "배터리 교체는 어디서?"
         assert record["answer"] == "서비스센터에서 가능합니다."
+        assert record["input_dom_verified"] is False
+        assert record["submit_effect_verified"] is False
         assert record["overall_score"] == 0.9
         assert record["needs_human_review"] is False
         assert record["fix_suggestion"] == ""
@@ -177,6 +182,10 @@ class TestExtractedPairNewFields:
     def test_new_bot_response_detected_defaults_to_false(self):
         pair = _make_pair()
         assert pair.new_bot_response_detected is False
+
+    def test_submit_method_defaults_to_unknown(self):
+        pair = _make_pair()
+        assert pair.submit_method_used == "unknown"
 
     def test_baseline_menu_detected_defaults_to_false(self):
         pair = _make_pair()

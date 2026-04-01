@@ -8,8 +8,12 @@
 사용자가 결과를 볼 때 가장 먼저 봐야 할 파일은 reports/latest_conversation.md 이다.
 이 파일에 질문, 입력 검증 여부, 새 응답 여부, 실제 답변, 평가 결과, 스크린샷 경로를 모두 기록하라.
 before_send 스크린샷은 질문 입력 성공 증거다.
+after_send 스크린샷은 제출 효과 증거다.
 after_answer 스크린샷은 새 답변 생성 증거다.
 mock answer나 simulated result는 절대 생성하지 않는다.
+DOM 값 변경만으로는 질문 제출 성공이 아니다.
+js 입력은 임시 fallback이며 신뢰도가 낮다.
+가장 중요한 것은 submit_effect_verified 와 new_bot_response_detected 다.
 
 ## 결과 확인 순서
 
@@ -128,28 +132,36 @@ PWDEBUG=1 python run.py
 6. 없으면 page.frames 순회로 iframe 안 입력창 탐색
 7. 챗이 열리면 opened 스크린샷 저장
 8. 질문 입력 시 fill -> press_sequentially -> keyboard.type -> JS fallback 순서로 시도
-9. 각 전략 후 DOM 값 검증
+9. DOM input state 검증
 10. before_send 스크린샷 저장
-11. 전송 버튼 클릭 또는 Enter fallback
+11. send button click 또는 Enter 로 제출 시도
 12. after_send 스크린샷 저장
-13. 질문 전 baseline bot message 개수와 baseline text snapshot 기록
-14. 전송 후 current_count > baseline_bot_count 인 경우만 새 bot response 후보로 인정
-15. baseline 이후 새 응답이 안정화되면 after_answer 스크린샷 저장
-16. 질문/답변 pair 저장
-17. 입력 검증과 새 응답 검증이 모두 성공한 경우에만 OpenAI 평가
+13. input clear, user echo, history 변화, visible text 변화 등 submit effect 검증
+14. 질문 전 baseline bot message 개수와 baseline text snapshot 기록
+15. 전송 후 bot count 증가 또는 baseline 에 없던 bot text 출현을 새 응답 후보로 인정
+16. baseline 이후 새 응답이 안정화되면 after_answer 스크린샷 저장
+17. submit_effect_verified 와 new_bot_response_detected 가 모두 참일 때만 질문/답변 pair 를 평가
 
 ## 입력 검증 규칙
 
-질문 입력 성공으로 인정되려면 아래가 반드시 참이어야 한다.
+질문 입력 성공은 DOM 값 변경만으로 인정하지 않는다.
 
-1. 입력창 DOM 값에 질문 문자열이 실제 존재한다.
-2. before_send 스크린샷이 실제로 저장된다.
+질문 입력 및 제출 성공으로 인정되려면 아래가 반드시 참이어야 한다.
+
+1. input_dom_verified 가 True 다.
+2. submit_effect_verified 가 True 다.
+3. before_send 스크린샷이 실제로 저장된다.
 
 추가 검증:
 
 - 가능하면 전송 후 user message echo 가 chat history 에 나타나는지 확인한다.
+- user echo 가 없어도 submit_effect_verified 와 new_bot_response_detected 가 함께 참이면 통과할 수 있다.
 
 입력 검증이 실패하면 status 는 invalid_capture 이며, OpenAI 평가는 진행하지 않는다.
+
+현재 실패의 본질은 입력창 DOM 값 변경과 실제 질문 제출을 동일하게 취급한 데 있다. 앞으로는 submit effect가 검증되지 않으면 질문 제출 성공으로 간주하지 말고 invalid_capture로 처리하라.
+
+js fallback으로 input value만 바뀐 경우는 가짜 성공일 수 있다. send button 활성화, input clear, user echo, history 변화, new bot response 중 최소 핵심 신호가 있어야만 실제 질문 제출 성공으로 간주하라.
 
 ## 새 답변 감지 규칙
 
@@ -201,8 +213,11 @@ artifacts/trace/{timestamp}_{case}.zip
 메인 결과 파일이다. 각 케이스별로 아래를 기록한다.
 
 - 질문
+- Input DOM Verified
+- Submit Effect Verified
 - 입력 검증 여부
 - 입력 방식
+- 제출 방식
 - 질문 echo 여부
 - 새 응답 감지 여부
 - baseline menu 감지 여부
@@ -217,8 +232,11 @@ artifacts/trace/{timestamp}_{case}.zip
 ==================================================
 CASE: case01
 QUESTION: 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?
+INPUT DOM VERIFIED: True
+SUBMIT EFFECT VERIFIED: True
 INPUT VERIFIED: True
 INPUT METHOD: press_sequentially
+SUBMIT METHOD USED: button_click
 QUESTION ECHO VERIFIED: True
 NEW BOT RESPONSE RECEIVED: True
 BASELINE MENU DETECTED: False

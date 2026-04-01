@@ -33,9 +33,12 @@ def _print_case_summary(project_root: Path, result: RunResult) -> None:
     print("=" * 50)
     print(f"CASE: {pair.case_id}")
     print(f"QUESTION: {pair.question}")
+    print(f"INPUT DOM VERIFIED: {pair.input_dom_verified}")
+    print(f"SUBMIT EFFECT VERIFIED: {pair.submit_effect_verified}")
     print(f"INPUT VERIFIED: {pair.input_verified}")
     if pair.input_method_used:
         print(f"INPUT METHOD: {pair.input_method_used}")
+    print(f"SUBMIT METHOD USED: {pair.submit_method_used}")
     print(f"QUESTION ECHO VERIFIED: {pair.user_message_echo_verified}")
     print(f"NEW BOT RESPONSE RECEIVED: {pair.new_bot_response_detected}")
     if pair.status in {"invalid_capture", "failed"}:
