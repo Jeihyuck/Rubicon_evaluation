@@ -118,6 +118,7 @@ class BrowserManager:
 
         context_kwargs: dict[str, Any] = {
             "locale": self.config.default_locale,
+            "timezone_id": "Asia/Seoul",
             "viewport": {"width": 1440, "height": 1200},
         }
         if self.config.enable_video:

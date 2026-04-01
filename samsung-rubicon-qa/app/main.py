@@ -10,7 +10,7 @@ from app.config import load_config
 from app.csv_loader import load_test_cases
 from app.evaluator import evaluate_pair, fallback_evaluation
 from app.logger import create_logger
-from app.models import RunResult
+from app.models import EvalResult, RunResult
 from app.report_writer import format_case_console_block, write_reports
 from app.samsung_rubicon import configure_runtime, run_single_case
 from app.utils import artifact_timestamp, relative_to_root, sanitize_filename
@@ -49,7 +49,22 @@ def run(project_root: Path | None = None) -> list[RunResult]:
                 video_path=relative_to_root(Path(video_path) if video_path else None, config.project_root),
             )
 
-            evaluation = evaluate_pair(config, test_case, pair, logger) if pair.answer else fallback_evaluation()
+            evaluation = evaluate_pair(config, test_case, pair, logger) if (pair.answer and pair.input_verified) else (
+                EvalResult(
+                    overall_score=0.0,
+                    relevance_score=0.0,
+                    clarity_score=0.0,
+                    completeness_score=0.0,
+                    keyword_alignment_score=0.0,
+                    hallucination_risk="high",
+                    needs_human_review=True,
+                    reason="Question input not verified",
+                    fix_suggestion=(
+                        "Confirm the question was actually typed into the chat input by checking "
+                        "before-send screenshots and [INPUT] log entries."
+                    ),
+                ) if not pair.input_verified else fallback_evaluation()
+            )
             result = RunResult(test_case=test_case, pair=pair, evaluation=evaluation)
             results.append(result)
             print(format_case_console_block(result), flush=True)

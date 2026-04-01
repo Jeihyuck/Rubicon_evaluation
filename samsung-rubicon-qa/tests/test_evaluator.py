@@ -41,6 +41,8 @@ def _make_pair(answer: str = "서비스센터에서 가능합니다.") -> Extrac
         extraction_confidence=1.0,
         response_ms=1000,
         status="passed",
+        input_verified=True,
+        input_method_used="fill",
     )
 
 

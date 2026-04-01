@@ -130,3 +130,143 @@ playwright show-trace artifacts/trace/<trace-file>.zip
 - summary 리포트 생략 금지
 
 이 프로젝트의 1차 목표는 Codespaces에서 브라우저를 실제로 열어 질문 입력, 답변 표시, 평가 결과를 사람이 즉시 확인 가능하게 만드는 것이다.
+
+---
+
+## 왜 질문 입력 검증이 필요한가
+
+단순히 `fill()` 또는 `type()`을 호출한 후 바로 전송하면, 실제로 텍스트가 입력창에 들어가지 않아도 전송이 실행될 수 있다. 특히 Sprinklr/Rubicon 위젯처럼 `contenteditable` 또는 커스텀 React controlled input인 경우 DOM 값이 비어 있는 채로 전송이 돼버린다.
+
+따라서 이 프로젝트는 다음 순서로 입력을 시도하고, 각 단계마다 DOM 값을 직접 검증한 뒤 성공 시에만 다음 단계로 진행한다.
+
+1. `locator.fill()` → DOM 값 검증
+2. `locator.press_sequentially()` (40ms 딜레이, 시각적 타이핑) → DOM 값 검증
+3. `locator.click()` + `page.keyboard.type()` → DOM 값 검증
+4. JavaScript `element.value = ...` + event dispatch (최후 수단) → DOM 값 검증
+
+모든 방식이 실패하면 예외를 발생시켜 해당 케이스를 `status=failed`로 처리하고, LLM 평가를 건너뛴다.
+
+## 질문 입력 직전 스크린샷 확인
+
+질문이 입력창에 들어간 직후, 전송 버튼을 누르기 전에 아래 두 스크린샷이 저장된다.
+
+- `artifacts/chatbox/{timestamp}_{case_id}_before_send.png` — 챗 영역
+- `artifacts/fullpage/{timestamp}_{case_id}_before_send.png` — 전체 페이지
+
+이 스크린샷에서 입력창에 질문 텍스트가 보이면 실제 입력이 성공한 증거다.
+
+결과 JSON/CSV에서 `before_send_screenshot_path` 필드로 경로를 확인할 수 있다.
+
+## 한 케이스당 최소 3단계 증적
+
+| 단계 | 파일 suffix | 의미 |
+|------|-------------|------|
+| 챗 위젯 열린 직후 | `_opened.png` | 입력창이 보이는 상태 |
+| 질문 입력 직후 전송 전 | `_before_send.png` | 질문 텍스트가 입력창에 들어간 증거 |
+| 답변 완료 후 | `_answered.png` | 챗봇 응답이 표시된 상태 |
+
+## 한국어 폰트 설치 방법 (Codespaces/Ubuntu)
+
+챗 위젯에서 한글이 전히 깨지는 경우 아래를 실행하라.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fonts-noto-cjk fonts-nanum
+fc-cache -f -v
+```
+
+폰트 설치 확인:
+
+```bash
+fc-list | grep -i "Noto Sans KR\|Nanum"
+```
+
+브라우저 locale은 `browser.py`에서 `locale="ko-KR"`, `timezone_id="Asia/Seoul"`로 고정 설정되어 있다.
+
+추가로, 페이지 로드 후 아래 CSS가 자동 주입된다.
+
+```css
+* {
+  font-family: "Noto Sans KR", "Noto Sans CJK KR", "Nanum Gothic", "Apple SD Gothic Neo", sans-serif !important;
+}
+```
+
+이 CSS는 메인 페이지와 챗 프레임에 각각 주입을 시도한다.
+
+## 한글 깨짐 발생 시 점검법
+
+1. 폰트 설치 여부 확인: `fc-list | grep -i "Noto\|Nanum"`
+2. 결과 JSON에서 `font_fix_applied` 필드 확인 — `true`여야 정상
+3. `_before_send.png` 스크린샷에서 한글이 보이는지 확인
+4. runtime.log에서 `[FONT]` 로그 라인 확인
+
+## 입력창이 contenteditable일 때의 처리 방식
+
+Sprinklr 위젯은 `<div contenteditable="true">` 구조를 사용하는 경우가 있다. 이 경우:
+
+- `input_value()`는 작동하지 않으므로 `inner_text()` 또는 `text_content()`로 검증한다.
+- `fill()`은 Playwright가 contenteditable을 지원하므로 1차 시도에서 동작할 수 있다.
+- 동작하지 않을 경우 `press_sequentially()`나 `keyboard.type()`으로 대체된다.
+- JavaScript fallback은 `el.textContent = value` 후 `InputEvent('input')` dispatch로 React/Vue 상태를 강제 갱신한다.
+
+## Sprinklr iframe 내부 입력 실패 시 디버깅 방법
+
+1. trace 파일을 열어 어느 frame에서 locator가 탐색됐는지 확인한다.
+
+   ```bash
+   playwright show-trace artifacts/trace/<trace-file>.zip
+   ```
+
+2. runtime.log에서 `[INPUT]` 로그를 확인한다.
+
+   ```
+   [INPUT] locator found via scope: <frame-name>
+   [INPUT] detected type: contenteditable
+   [INPUT] focus success
+   [INPUT] fill failed: empty or mismatched after fill
+   [INPUT] press_sequentially attempt success
+   [INPUT] verification success: "갤럭시 배터리 교체는 어디서 하나요?"
+   [ARTIFACT] before-send screenshot saved: artifacts/chatbox/...png
+   [INPUT] send clicked
+   ```
+
+3. `artifacts/chatbox/*.html` DOM fragment에서 실제 입력창 선택자를 찾는다.
+
+4. `app/samsung_rubicon.py`의 `INPUT_CANDIDATES` 배열에 새 선택자를 추가한다.
+
+## Playwright Inspector 사용 방법
+
+Inspector를 열면 locator를 실시간으로 탐색하고 actionability를 확인할 수 있다.
+
+```bash
+PWDEBUG=1 python run.py
+```
+
+또는 코드 내에서 중단점을 설정하려면:
+
+```python
+page.pause()
+```
+
+Inspector에서 `Pick locator` 버튼을 누르고 챗 입력창을 클릭하면 Playwright가 적절한 locator 문자열을 자동 제안한다.
+
+## Codespaces 실행 전 체크리스트
+
+- [ ] `.env`에 `OPENAI_API_KEY` 설정 완료
+- [ ] `pip install -r requirements.txt` 완료
+- [ ] Playwright Chromium 설치: `python -m playwright install chromium`
+- [ ] 한국어 폰트 설치: `sudo apt-get install -y fonts-noto-cjk fonts-nanum && fc-cache -f -v`
+- [ ] 폰트 확인: `fc-list | grep -i "Noto Sans KR\|Nanum"`
+- [ ] `HEADLESS=false`로 실행 (기본값)
+
+## 결과 JSON 주요 필드
+
+| 필드 | 설명 |
+|------|------|
+| `input_verified` | 질문이 DOM에서 검증됐는지 여부 (`true`/`false`) |
+| `input_method_used` | 실제로 사용된 입력 방식 (`fill` / `press_sequentially` / `keyboard` / `js`) |
+| `before_send_screenshot_path` | 전송 전 입력창 스크린샷 경로 |
+| `font_fix_applied` | 한국어 폰트 CSS 주입 여부 |
+| `status` | `passed` 또는 `failed` |
+
+`input_verified=false`인 케이스는 LLM 평가를 건너뛰고 `reason="Question input not verified"`로 처리된다.

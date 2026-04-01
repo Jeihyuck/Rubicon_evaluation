@@ -42,11 +42,15 @@ class ExtractedPair:
     chat_screenshot_path: str = ""
     submitted_chat_screenshot_path: str = ""
     answered_chat_screenshot_path: str = ""
+    before_send_screenshot_path: str = ""
     video_path: str = ""
     trace_path: str = ""
     html_fragment_path: str = ""
     evidence_markdown_path: str = ""
     evidence_json_path: str = ""
+    input_verified: bool = False
+    input_method_used: str = ""
+    font_fix_applied: bool = False
 
 
 @dataclass(slots=True)
@@ -105,6 +109,10 @@ class RunResult:
             "chat_screenshot_path": self.pair.chat_screenshot_path,
             "submitted_chat_screenshot_path": self.pair.submitted_chat_screenshot_path,
             "answered_chat_screenshot_path": self.pair.answered_chat_screenshot_path,
+            "before_send_screenshot_path": self.pair.before_send_screenshot_path,
+            "input_verified": self.pair.input_verified,
+            "input_method_used": self.pair.input_method_used,
+            "font_fix_applied": self.pair.font_fix_applied,
             "video_path": self.pair.video_path,
             "trace_path": self.pair.trace_path,
             "html_fragment_path": self.pair.html_fragment_path,
