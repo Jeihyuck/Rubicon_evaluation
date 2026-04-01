@@ -79,6 +79,11 @@ POPUP_ACCEPT_CANDIDATES = [
     {"type": "text", "value": compile_regex(r"동의|확인|Accept|허용")},
 ]
 
+KOREAN_FONT_CSS = (
+    '* { font-family: "Noto Sans KR", "Noto Sans CJK KR", "Nanum Gothic",'
+    ' "Apple SD Gothic Neo", sans-serif !important; }'
+)
+
 
 @dataclass(slots=True)
 class _RuntimeState:
@@ -166,6 +171,30 @@ def _open_sprinklr_widget(page: Page) -> bool:
         runtime.logger.info("rubicon icon clicked")
         return True
     return False
+
+
+def inject_korean_font(page: Page) -> bool:
+    """Inject Korean font fallback CSS into the page and all loaded frames.
+
+    Returns True when the style tag was injected successfully.
+    """
+
+    runtime = _runtime()
+    success = False
+    try:
+        page.add_style_tag(content=KOREAN_FONT_CSS)
+        success = True
+        runtime.logger.info("[FONT] Korean font fallback injected into main page")
+    except Exception as exc:
+        runtime.logger.warning("[FONT] font injection failed on main page: %s", exc)
+
+    for frame in page.frames:
+        try:
+            frame.add_style_tag(content=KOREAN_FONT_CSS)
+        except Exception:
+            pass
+
+    return success
 
 
 def open_homepage(page: Page) -> None:
@@ -262,42 +291,288 @@ def resolve_chat_context(page: Page) -> ResolvedChatContext:
     raise RuntimeError("Chat iframe/input context could not be resolved")
 
 
-def submit_question(context: ResolvedChatContext, question: str) -> None:
-    """Submit a question through the resolved chat input control."""
+# ---------------------------------------------------------------------------
+# Input verification helpers
+# ---------------------------------------------------------------------------
+
+def _detect_input_type(locator: Locator) -> str:
+    """Detect whether the locator targets an input, textarea, or contenteditable."""
+
+    try:
+        tag = locator.evaluate("el => el.tagName.toLowerCase()")
+        if tag in ("input", "textarea"):
+            return tag
+        ce = locator.evaluate("el => el.contentEditable")
+        if ce and ce not in ("inherit", "false"):
+            return "contenteditable"
+    except Exception:
+        pass
+    return "input"
+
+
+def _focus_input(locator: Locator, logger: Any) -> bool:
+    """Click the input to give it focus; return True on success."""
+
+    try:
+        locator.scroll_into_view_if_needed(timeout=1500)
+        locator.click(timeout=2000)
+        logger.info("[INPUT] focus success")
+        return True
+    except Exception as exc:
+        logger.warning("[INPUT] focus fail: %s", exc)
+        return False
+
+
+def _clear_input(locator: Locator, input_type: str) -> None:
+    """Remove any existing text from the input element."""
+
+    try:
+        if input_type in ("input", "textarea"):
+            locator.fill("", timeout=1500)
+        else:
+            locator.press("Control+A")
+            locator.press("Backspace")
+    except Exception:
+        try:
+            locator.press("Control+A")
+            locator.press("Backspace")
+        except Exception:
+            pass
+
+
+def verify_input_text(locator: Locator, question: str, input_type: str) -> bool:
+    """Return True when the question text is confirmed present in the input element."""
+
+    try:
+        if input_type in ("input", "textarea"):
+            value = locator.input_value(timeout=1500)
+            return value.strip() == question.strip()
+        else:
+            text = locator.inner_text(timeout=1500)
+            return question.strip() in text.strip()
+    except Exception:
+        return False
+
+
+def _try_fill(locator: Locator, question: str, input_type: str, logger: Any) -> bool:
+    try:
+        locator.fill(question, timeout=2500)
+        if verify_input_text(locator, question, input_type):
+            logger.info("[INPUT] fill attempt success")
+            return True
+        logger.warning("[INPUT] fill failed: empty or mismatched after fill")
+        return False
+    except Exception as exc:
+        logger.warning("[INPUT] fill attempt failed: %s", exc)
+        return False
+
+
+def _try_press_sequentially(locator: Locator, question: str, input_type: str, logger: Any) -> bool:
+    try:
+        locator.press_sequentially(question, delay=30)
+        if verify_input_text(locator, question, input_type):
+            logger.info("[INPUT] press_sequentially success")
+            return True
+        logger.warning("[INPUT] press_sequentially failed: verification failed")
+        return False
+    except Exception as exc:
+        logger.warning("[INPUT] press_sequentially attempt failed: %s", exc)
+        return False
+
+
+def _try_keyboard_type(
+    scope: Page | Frame,
+    locator: Locator,
+    question: str,
+    input_type: str,
+    logger: Any,
+) -> bool:
+    try:
+        locator.click(timeout=1500)
+        if hasattr(scope, "keyboard"):
+            scope.keyboard.type(question, delay=20)
+        else:
+            locator.press_sequentially(question, delay=20)
+        if verify_input_text(locator, question, input_type):
+            logger.info("[INPUT] keyboard.type attempt success")
+            return True
+        logger.warning("[INPUT] keyboard.type failed: verification failed")
+        return False
+    except Exception as exc:
+        logger.warning("[INPUT] keyboard.type attempt failed: %s", exc)
+        return False
+
+
+def _try_js_fallback(locator: Locator, question: str, input_type: str, logger: Any) -> bool:
+    logger.warning("[INPUT] JS fallback used")
+    try:
+        if input_type in ("input", "textarea"):
+            locator.evaluate(
+                "(el, v) => { el.value = v;"
+                " el.dispatchEvent(new Event('input', {bubbles: true}));"
+                " el.dispatchEvent(new Event('change', {bubbles: true})); }",
+                question,
+            )
+        else:
+            locator.evaluate(
+                "(el, v) => { el.textContent = v;"
+                " el.dispatchEvent(new Event('input', {bubbles: true}));"
+                " el.dispatchEvent(new Event('change', {bubbles: true})); }",
+                question,
+            )
+        if verify_input_text(locator, question, input_type):
+            logger.info("[INPUT] JS fallback success")
+            return True
+        logger.warning("[INPUT] JS fallback failed: verification failed")
+        return False
+    except Exception as exc:
+        logger.warning("[INPUT] JS fallback failed: %s", exc)
+        return False
+
+
+def enter_question_with_verification(
+    scope: Page | Frame,
+    input_locator: Locator,
+    question: str,
+    logger: Any,
+) -> tuple[bool, str]:
+    """Try multiple strategies to type *question* and verify it was accepted.
+
+    Returns ``(input_verified, method_used)`` where *method_used* is one of
+    ``"fill"``, ``"press_sequentially"``, ``"keyboard"``, ``"js"`` or ``""``
+    when all strategies fail.
+    """
+
+    input_type = _detect_input_type(input_locator)
+    logger.info("[INPUT] locator found via resolved context")
+    logger.info("[INPUT] detected type: %s", input_type)
+
+    _focus_input(input_locator, logger)
+    _clear_input(input_locator, input_type)
+
+    if _try_fill(input_locator, question, input_type, logger):
+        return True, "fill"
+
+    _clear_input(input_locator, input_type)
+    _focus_input(input_locator, logger)
+
+    if _try_press_sequentially(input_locator, question, input_type, logger):
+        return True, "press_sequentially"
+
+    _clear_input(input_locator, input_type)
+    _focus_input(input_locator, logger)
+
+    if _try_keyboard_type(scope, input_locator, question, input_type, logger):
+        return True, "keyboard"
+
+    _clear_input(input_locator, input_type)
+
+    if _try_js_fallback(input_locator, question, input_type, logger):
+        return True, "js"
+
+    logger.error("[INPUT] all strategies failed for question: %.60s", question)
+    return False, ""
+
+
+def _capture_stage(
+    page: Page,
+    context: ResolvedChatContext | None,
+    case_id: str,
+    timestamp: str,
+    stage: str,
+    config: AppConfig,
+    logger: Any,
+) -> tuple[str, str]:
+    """Capture fullpage + chatbox screenshots for a named stage.
+
+    Returns ``(fullpage_path, chatbox_path)`` strings (empty on failure).
+    """
+
+    safe_id = sanitize_filename(case_id)
+    fullpage_path = config.fullpage_dir / f"{timestamp}_{safe_id}_{stage}.png"
+    chatbox_path = config.chatbox_dir / f"{timestamp}_{safe_id}_{stage}.png"
+
+    fp_str = ""
+    cb_str = ""
+
+    try:
+        page.screenshot(path=str(fullpage_path), full_page=True)
+        fp_str = str(fullpage_path)
+    except Exception as exc:
+        logger.warning("stage %s fullpage screenshot failed: %s", stage, exc)
+
+    try:
+        if context is not None and context.container_locator is not None:
+            context.container_locator.screenshot(path=str(chatbox_path))
+        elif context is not None:
+            context.input_locator.screenshot(path=str(chatbox_path))
+        else:
+            page.screenshot(path=str(chatbox_path))
+        cb_str = str(chatbox_path)
+    except Exception as exc:
+        logger.warning("stage %s chatbox screenshot failed: %s", stage, exc)
+
+    if cb_str:
+        logger.info("[ARTIFACT] %s screenshot saved: %s", stage, cb_str)
+
+    return fp_str, cb_str
+
+
+def submit_question(
+    page: Page,
+    context: ResolvedChatContext,
+    question: str,
+) -> tuple[bool, str, str]:
+    """Submit *question* through the resolved chat input with DOM verification.
+
+    Returns ``(input_verified, input_method_used, before_send_chatbox_path)``.
+    The question is sent **only** if at least one input strategy passes
+    text-content verification.  On total failure the function raises
+    ``RuntimeError`` so the caller can mark the case as failed.
+    """
 
     runtime = _runtime()
     context.baseline_bot_count = count_bot_messages(context)
 
-    try:
-        context.input_locator.click(timeout=1500)
-    except Exception:
-        pass
+    input_verified, method_used = enter_question_with_verification(
+        context.scope, context.input_locator, question, runtime.logger
+    )
 
-    filled = False
-    try:
-        context.input_locator.fill(question, timeout=2500)
-        filled = True
-    except Exception:
-        filled = False
+    if not input_verified:
+        runtime.logger.error(
+            "[INPUT] verification failed — will not send question: %.60s", question
+        )
+        raise RuntimeError(
+            f"Question input not verified after all strategies: {question[:60]}"
+        )
 
-    if not filled:
-        try:
-            context.input_locator.press("Control+A")
-            context.input_locator.press("Backspace")
-        except Exception:
-            pass
-        context.input_locator.type(question, delay=25)
+    runtime.logger.info(
+        "[INPUT] verification success: %.60s  (method=%s)", question, method_used
+    )
+
+    _, before_send_chatbox = _capture_stage(
+        page,
+        context,
+        runtime.current_case_id,
+        runtime.current_case_timestamp,
+        "before_send",
+        runtime.config,
+        runtime.logger,
+    )
 
     if context.send_locator is not None:
         try:
             context.send_locator.click(timeout=2500)
+            runtime.logger.info("[INPUT] send clicked")
             runtime.logger.info("question submitted")
-            return
+            return input_verified, method_used, before_send_chatbox
         except Exception:
             pass
 
     context.input_locator.press("Enter")
+    runtime.logger.info("[INPUT] send clicked (Enter key)")
     runtime.logger.info("question submitted")
+    return input_verified, method_used, before_send_chatbox
 
 
 def _loading_visible(context: ResolvedChatContext) -> bool:
@@ -399,14 +674,43 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     response_ms = 0
     status = "passed"
     error_message = ""
+    input_verified = False
+    input_method_used = ""
+    before_send_screenshot_path = ""
+    font_fix_applied = False
 
     try:
         open_homepage(page)
+        font_fix_applied = inject_korean_font(page)
         dismiss_popups(page)
         open_rubicon_widget(page)
+
+        _capture_stage(
+            page,
+            None,
+            test_case.id,
+            runtime.current_case_timestamp,
+            "opened",
+            runtime.config,
+            runtime.logger,
+        )
+
         context = resolve_chat_context(page)
-        submit_question(context, test_case.question)
+        input_verified, input_method_used, before_send_screenshot_path = submit_question(
+            page, context, test_case.question
+        )
         answer, response_ms = wait_for_answer_completion(context)
+
+        _capture_stage(
+            page,
+            context,
+            test_case.id,
+            runtime.current_case_timestamp,
+            "after_answer",
+            runtime.config,
+            runtime.logger,
+        )
+
         artifacts = capture_artifacts(page, context, test_case.id)
 
         dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
@@ -453,4 +757,9 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         video_path="",
         trace_path="",
         html_fragment_path=str(artifacts.html_fragment_path or runtime.latest_html_fragment_path or ""),
+        input_verified=input_verified,
+        input_method_used=input_method_used,
+        before_send_screenshot_path=before_send_screenshot_path,
+        font_fix_applied=font_fix_applied,
     )
+

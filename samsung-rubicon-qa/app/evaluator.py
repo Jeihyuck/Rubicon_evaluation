@@ -102,6 +102,23 @@ def _response_text(response: Any) -> str:
 def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, logger: Any) -> EvalResult:
     """Evaluate a question-answer pair with OpenAI Structured Outputs."""
 
+    if not pair.input_verified:
+        logger.warning(
+            "Input verification failed for case %s; skipping GPT evaluation", pair.case_id
+        )
+        logger.info("evaluation completed")
+        return EvalResult(
+            overall_score=0.0,
+            relevance_score=0.0,
+            clarity_score=0.0,
+            completeness_score=0.0,
+            keyword_alignment_score=0.0,
+            hallucination_risk="high",
+            needs_human_review=True,
+            reason="Question input not verified",
+            fix_suggestion="Check logs and before-send screenshots for input failure details",
+        )
+
     if not config.openai_api_key:
         logger.warning("OpenAI API key missing; using fallback evaluation")
         logger.info("evaluation completed")

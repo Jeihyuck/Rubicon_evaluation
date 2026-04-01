@@ -44,7 +44,11 @@ def run(project_root: Path | None = None) -> list[RunResult]:
             trace_path, video_path = session.close(trace_target=trace_target, video_target=video_target)
             pair = replace(pair, trace_path=trace_path, video_path=video_path)
 
-            evaluation = evaluate_pair(config, test_case, pair, logger) if pair.answer else fallback_evaluation()
+            evaluation = (
+                evaluate_pair(config, test_case, pair, logger)
+                if pair.answer and pair.input_verified
+                else fallback_evaluation()
+            )
             results.append(RunResult(test_case=test_case, pair=pair, evaluation=evaluation))
     finally:
         browser_manager.stop()

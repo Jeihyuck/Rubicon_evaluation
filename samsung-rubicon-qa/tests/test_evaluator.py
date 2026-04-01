@@ -41,6 +41,8 @@ def _make_pair(answer: str = "서비스센터에서 가능합니다.") -> Extrac
         extraction_confidence=1.0,
         response_ms=1000,
         status="passed",
+        input_verified=True,
+        input_method_used="fill",
     )
 
 
@@ -165,6 +167,18 @@ class TestEvaluatePair:
         result = evaluate_pair(config, _make_test_case(), _make_pair(), logger)
         assert result.overall_score == 0.0
         assert result.needs_human_review is True
+
+    def test_fallback_when_input_not_verified(self):
+        config = _make_config(api_key="sk-test")
+        logger = MagicMock()
+        unverified_pair = _make_pair()
+        # Override to unverified
+        from dataclasses import replace
+        unverified_pair = replace(unverified_pair, input_verified=False)
+        result = evaluate_pair(config, _make_test_case(), unverified_pair, logger)
+        assert result.overall_score == 0.0
+        assert result.needs_human_review is True
+        assert result.reason == "Question input not verified"
 
     def test_openai_success(self):
         import json

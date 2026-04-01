@@ -74,6 +74,10 @@ class TestExtractedPair:
         assert pair.video_path == ""
         assert pair.trace_path == ""
         assert pair.html_fragment_path == ""
+        assert pair.input_verified is False
+        assert pair.input_method_used == ""
+        assert pair.before_send_screenshot_path == ""
+        assert pair.font_fix_applied is False
 
 
 class TestRunResult:

@@ -41,6 +41,10 @@ class ExtractedPair:
     video_path: str = ""
     trace_path: str = ""
     html_fragment_path: str = ""
+    input_verified: bool = False
+    input_method_used: str = ""
+    before_send_screenshot_path: str = ""
+    font_fix_applied: bool = False
 
 
 @dataclass(slots=True)
@@ -108,3 +112,4 @@ class BrowserArtifacts:
     video_path: Path | None = None
     trace_path: Path | None = None
     html_fragment_path: Path | None = None
+    before_send_screenshot_path: Path | None = None
