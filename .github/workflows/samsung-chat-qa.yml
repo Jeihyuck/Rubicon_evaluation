@@ -1,0 +1,71 @@
+name: Samsung Chat QA Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_questions:
+        description: "Maximum number of test cases to run (0 = use CSV limit)"
+        required: false
+        default: "3"
+      headless:
+        description: "Run browser in headless mode"
+        required: false
+        default: "true"
+
+  # Daily run at 02:00 UTC (UTC+9 = 11:00 KST)
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  qa-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SAMSUNG_BASE_URL: "https://www.samsung.com/"
+      HEADLESS: ${{ github.event.inputs.headless || 'true' }}
+      DEFAULT_LOCALE: "en-US"
+      MAX_QUESTIONS: ${{ github.event.inputs.max_questions || '3' }}
+      OPENAI_MODEL: "gpt-4o"
+      PLAYWRIGHT_TIMEOUT_MS: "30000"
+      ANSWER_STABLE_CHECKS: "3"
+      ANSWER_STABLE_INTERVAL_SEC: "1.0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install --with-deps chromium
+
+      - name: Run Samsung Chat QA
+        run: python run.py
+        continue-on-error: true   # Ensure artifacts are uploaded even on failure
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ github.run_id }}
+          path: reports/
+          retention-days: 30
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 30

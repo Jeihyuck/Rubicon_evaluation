@@ -1,0 +1,4 @@
+id,category,locale,page_url,question,expected_keywords,forbidden_keywords
+TC001,product-info,en-US,https://www.samsung.com/us/,"What are the latest Samsung Galaxy smartphones available?",Galaxy|smartphone|5G,error|unavailable|sorry
+TC002,support,en-US,https://www.samsung.com/us/support/,"How do I reset my Samsung TV to factory settings?",reset|settings|factory|TV,error|unavailable
+TC003,product-info,en-US,https://www.samsung.com/us/,"Tell me about Samsung's QLED TV technology.",QLED|display|TV|picture quality,error|broken

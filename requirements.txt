@@ -1,0 +1,6 @@
+# Core runtime
+playwright==1.44.0
+openai>=1.30.0
+python-dotenv>=1.0.0
+
+# Data handling (csv/json are stdlib; no extra package needed)
