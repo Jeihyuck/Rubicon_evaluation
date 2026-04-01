@@ -701,7 +701,7 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> tuple[str, int]:
     while time.perf_counter() < deadline:
         current_count = count_bot_messages(context)
         latest_text = extract_last_bot_message_text(context)
-        if latest_text and current_count >= max(1, context.baseline_bot_count):
+        if latest_text and current_count > context.baseline_bot_count:
             if latest_text == previous_text:
                 stable_checks += 1
             else:

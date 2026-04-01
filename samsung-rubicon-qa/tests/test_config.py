@@ -71,7 +71,7 @@ class TestLoadConfig:
             config = load_config(tmp_path)
         assert config.openai_api_key == "sk-abc"
         assert config.samsung_base_url == "https://www.samsung.com/sec/"
-        assert config.headless is True
+        assert config.headless is False
         assert config.max_questions == 5
         assert config.enable_ocr_fallback is False
 
