@@ -194,7 +194,20 @@ class TestBuildConversation:
             config.ensure_directories()
             paths = write_reports(config, [result])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
-        assert "New Bot Response Detected: True" in content
+        assert "New Bot Response Received: True" in content
+
+    def test_conversation_contains_required_labels(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [_make_result("c01")])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Input Method:" in content
+        assert "Question Echo In Chat:" in content
+        assert "Extracted Answer:" in content
+        assert "Submitted Chat Screenshot:" in content
+        assert "Answered Chat Screenshot:" in content
+        assert "Fullpage Screenshot:" in content
 
     def test_conversation_empty_history(self):
         """Message History shows '(empty)' when no history is captured."""
@@ -226,6 +239,7 @@ class TestBuildConversation:
     def test_summary_mentions_latest_conversation_priority(self):
         summary = _build_summary([_make_result("c01")])
         assert "reports/latest_conversation.md" in summary
+        assert "reports/latest_results.csv" in summary
 
     def test_conversation_md022_md032_compliance(self):
         """Generated markdown must satisfy MD022 (blank lines around headings) and MD032 (blank lines around lists)."""

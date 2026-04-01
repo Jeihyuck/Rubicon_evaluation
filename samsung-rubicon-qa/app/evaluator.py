@@ -59,6 +59,22 @@ def fallback_evaluation() -> EvalResult:
     )
 
 
+def _capture_not_verified_evaluation() -> EvalResult:
+    """Return the mandated evaluation payload for invalid or unverified captures."""
+
+    return EvalResult(
+        overall_score=0.0,
+        relevance_score=0.0,
+        clarity_score=0.0,
+        completeness_score=0.0,
+        keyword_alignment_score=0.0,
+        hallucination_risk="high",
+        needs_human_review=True,
+        reason="Capture invalid: no verified submitted question and bot answer pair",
+        fix_suggestion="Check before_send/after_send screenshots and submission logs",
+    )
+
+
 def _coerce_eval_payload(payload: dict[str, Any]) -> EvalResult:
     """Normalize model JSON to the required dataclass schema."""
 
@@ -102,29 +118,22 @@ def _response_text(response: Any) -> str:
 def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, logger: Any) -> EvalResult:
     """Evaluate a question-answer pair with OpenAI Structured Outputs."""
 
-    if not pair.input_verified or pair.status == "invalid_capture":
-        reason = (
-            "Invalid capture: question input was not verified"
-            if pair.status == "invalid_capture"
-            else "Question input not verified"
-        )
+    if (
+        not pair.answer
+        or pair.answer == "(none)"
+        or not pair.input_verified
+        or not pair.submit_effect_verified
+        or not pair.new_bot_response_detected
+        or pair.baseline_menu_detected
+        or pair.status == "invalid_capture"
+    ):
         logger.warning(
-            "Input verification failed for case %s (status=%s); skipping GPT evaluation",
+            "Capture verification failed for case %s (status=%s); skipping GPT evaluation",
             pair.case_id,
             pair.status,
         )
         logger.info("evaluation completed")
-        return EvalResult(
-            overall_score=0.0,
-            relevance_score=0.0,
-            clarity_score=0.0,
-            completeness_score=0.0,
-            keyword_alignment_score=0.0,
-            hallucination_risk="high",
-            needs_human_review=True,
-            reason=reason,
-            fix_suggestion="Check logs and before-send screenshots for input failure details",
-        )
+        return _capture_not_verified_evaluation()
 
     if not config.openai_api_key:
         logger.warning("OpenAI API key missing; using fallback evaluation")
@@ -145,19 +154,15 @@ def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, l
         "answer": pair.answer,
         "expected_keywords": test_case.expected_keywords,
         "forbidden_keywords": test_case.forbidden_keywords,
-        "extraction_source": pair.extraction_source,
-        "extraction_confidence": pair.extraction_confidence,
-        "artifacts": {
-            "full_screenshot_path": pair.full_screenshot_path,
-            "chat_screenshot_path": pair.chat_screenshot_path,
-            "video_path": pair.video_path,
-            "trace_path": pair.trace_path,
-            "html_fragment_path": pair.html_fragment_path,
-        },
+        "input_verified": pair.input_verified,
+        "submit_effect_verified": pair.submit_effect_verified,
+        "new_bot_response_detected": pair.new_bot_response_detected,
+        "baseline_menu_detected": pair.baseline_menu_detected,
         "instructions": [
-            "Consider whether the answer stays within a public, non-login flow.",
-            "Lower clarity/completeness for vague, evasive, or incomplete answers.",
-            "Set needs_human_review to true when the answer quality is weak or extraction confidence is low.",
+            "Evaluate only the real post-baseline bot response captured from samsung.com/sec/.",
+            "Score relevance, clarity, completeness, keyword alignment, and hallucination risk.",
+            "Lower the score for vague, evasive, incomplete, or unsupported answers.",
+            "Set needs_human_review to true when the answer quality is weak or uncertain.",
         ],
     }
 

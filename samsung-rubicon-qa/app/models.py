@@ -42,8 +42,11 @@ class ExtractedPair:
     video_path: str = ""
     trace_path: str = ""
     html_fragment_path: str = ""
+    input_dom_verified: bool = False
+    submit_effect_verified: bool = False
     input_verified: bool = False
     input_method_used: str = ""
+    submit_method_used: str = "unknown"
     opened_chat_screenshot_path: str = ""
     opened_full_screenshot_path: str = ""
     before_send_screenshot_path: str = ""
@@ -105,10 +108,16 @@ class RunResult:
         return {
             "run_timestamp": self.pair.run_timestamp,
             "case_id": self.pair.case_id,
+            "category": self.pair.category,
+            "page_url": self.pair.page_url,
+            "locale": self.pair.locale,
             "question": self.pair.question,
             "answer": self.pair.answer,
+            "input_dom_verified": self.pair.input_dom_verified,
+            "submit_effect_verified": self.pair.submit_effect_verified,
             "input_verified": self.pair.input_verified,
             "input_method_used": self.pair.input_method_used,
+            "submit_method_used": self.pair.submit_method_used,
             "user_message_echo_verified": self.pair.user_message_echo_verified,
             "new_bot_response_detected": self.pair.new_bot_response_detected,
             "baseline_menu_detected": self.pair.baseline_menu_detected,
@@ -121,9 +130,7 @@ class RunResult:
             "trace_path": self.pair.trace_path,
             "overall_score": self.evaluation.overall_score,
             "needs_human_review": self.evaluation.needs_human_review,
-            "page_url": self.pair.page_url,
-            "locale": self.pair.locale,
-            "category": self.pair.category,
+            "fix_suggestion": self.evaluation.fix_suggestion,
             "response_ms": self.pair.response_ms,
             "extraction_source": self.pair.extraction_source,
             "extraction_confidence": self.pair.extraction_confidence,
@@ -154,6 +161,9 @@ class ResolvedChatContext:
     loading_candidates: list[dict[str, Any]]
     baseline_bot_count: int = 0
     baseline_bot_messages: list[str] = field(default_factory=list)
+    baseline_history: list[str] = field(default_factory=list)
+    baseline_visible_text: str = ""
+    baseline_send_button_enabled: bool | None = None
 
 
 @dataclass(slots=True)

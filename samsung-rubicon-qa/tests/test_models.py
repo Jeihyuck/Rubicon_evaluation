@@ -127,6 +127,9 @@ class TestRunResult:
         assert record["answer"] == "서비스센터에서 가능합니다."
         assert record["overall_score"] == 0.9
         assert record["needs_human_review"] is False
+        assert record["fix_suggestion"] == ""
+        assert record["category"] == "service"
+        assert record["page_url"] == "https://www.samsung.com/sec/"
 
     def test_to_flat_dict_structure(self):
         result = RunResult(
@@ -166,6 +169,10 @@ class TestExtractedPairNewFields:
     def test_after_answer_screenshot_path_defaults_to_empty(self):
         pair = _make_pair()
         assert pair.after_answer_screenshot_path == ""
+
+    def test_after_answer_full_screenshot_path_defaults_to_empty(self):
+        pair = _make_pair()
+        assert pair.after_answer_full_screenshot_path == ""
 
     def test_new_bot_response_detected_defaults_to_false(self):
         pair = _make_pair()

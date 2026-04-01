@@ -8,12 +8,50 @@ from pathlib import Path
 from app.browser import BrowserManager
 from app.config import load_config
 from app.csv_loader import load_test_cases
-from app.evaluator import evaluate_pair, fallback_evaluation
+from app.evaluator import evaluate_pair
 from app.logger import create_logger
 from app.models import RunResult
 from app.report_writer import write_reports
 from app.samsung_rubicon import configure_runtime, run_single_case
 from app.utils import artifact_timestamp, sanitize_filename
+
+
+def _display_path(project_root: Path, value: str) -> str:
+    if not value:
+        return ""
+    target = Path(value)
+    try:
+        return str(target.relative_to(project_root))
+    except Exception:
+        return value
+
+
+def _print_case_summary(project_root: Path, result: RunResult) -> None:
+    pair = result.pair
+    evaluation = result.evaluation
+
+    print("=" * 50)
+    print(f"CASE: {pair.case_id}")
+    print(f"QUESTION: {pair.question}")
+    print(f"INPUT VERIFIED: {pair.input_verified}")
+    if pair.input_method_used:
+        print(f"INPUT METHOD: {pair.input_method_used}")
+    print(f"QUESTION ECHO VERIFIED: {pair.user_message_echo_verified}")
+    print(f"NEW BOT RESPONSE RECEIVED: {pair.new_bot_response_detected}")
+    if pair.status in {"invalid_capture", "failed"}:
+        print(f"STATUS: {pair.status}")
+        print(f"REASON: {pair.reason or evaluation.reason}")
+    else:
+        print(f"BASELINE MENU DETECTED: {pair.baseline_menu_detected}")
+        print(f"ANSWER: {pair.answer}")
+        print(f"OVERALL SCORE: {evaluation.overall_score:.2f}")
+        print(f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}")
+    print("CHECK FIRST: reports/latest_conversation.md")
+    if pair.before_send_screenshot_path:
+        print(f"BEFORE SEND SCREENSHOT: {_display_path(project_root, pair.before_send_screenshot_path)}")
+    if pair.after_answer_screenshot_path:
+        print(f"AFTER ANSWER SCREENSHOT: {_display_path(project_root, pair.after_answer_screenshot_path)}")
+    print("=" * 50)
 
 
 def run(project_root: Path | None = None) -> list[RunResult]:
@@ -44,15 +82,10 @@ def run(project_root: Path | None = None) -> list[RunResult]:
             trace_path, video_path = session.close(trace_target=trace_target, video_target=video_target)
             pair = replace(pair, trace_path=trace_path, video_path=video_path)
 
-            evaluation = (
-                evaluate_pair(config, test_case, pair, logger)
-                if pair.answer
-                and pair.input_verified
-                and pair.new_bot_response_detected
-                and pair.status == "passed"
-                else fallback_evaluation()
-            )
-            results.append(RunResult(test_case=test_case, pair=pair, evaluation=evaluation))
+            evaluation = evaluate_pair(config, test_case, pair, logger)
+            run_result = RunResult(test_case=test_case, pair=pair, evaluation=evaluation)
+            results.append(run_result)
+            _print_case_summary(config.project_root, run_result)
     finally:
         browser_manager.stop()
 
@@ -61,6 +94,7 @@ def run(project_root: Path | None = None) -> list[RunResult]:
     logger.info("check results in this order:")
     logger.info("1. %s", report_paths["conversation"])
     logger.info("2. %s", report_paths["json"])
-    logger.info("3. %s", config.chatbox_dir)
+    logger.info("3. %s", report_paths["csv"])
     logger.info("4. %s", report_paths["summary"])
+    logger.info("5. %s", config.chatbox_dir)
     return results

@@ -8,6 +8,7 @@ import pytest
 
 from app.evaluator import (
     EVALUATION_SCHEMA,
+    _capture_not_verified_evaluation,
     _coerce_eval_payload,
     _response_text,
     evaluate_pair,
@@ -43,6 +44,7 @@ def _make_pair(answer: str = "서비스센터에서 가능합니다.") -> Extrac
         status="passed",
         input_verified=True,
         input_method_used="fill",
+        new_bot_response_detected=True,
     )
 
 
@@ -87,6 +89,14 @@ class TestFallbackEvaluation:
     def test_needs_human_review(self):
         result = fallback_evaluation()
         assert result.needs_human_review is True
+
+
+class TestCaptureNotVerifiedEvaluation:
+    def test_matches_mandated_reason(self):
+        result = _capture_not_verified_evaluation()
+        assert result.overall_score == 0.0
+        assert result.needs_human_review is True
+        assert result.reason == "Question input or response capture not verified"
 
 
 class TestCoerceEvalPayload:
@@ -178,7 +188,7 @@ class TestEvaluatePair:
         result = evaluate_pair(config, _make_test_case(), unverified_pair, logger)
         assert result.overall_score == 0.0
         assert result.needs_human_review is True
-        assert result.reason == "Question input not verified"
+        assert result.reason == "Question input or response capture not verified"
 
     def test_fallback_when_invalid_capture(self):
         config = _make_config(api_key="sk-test")
@@ -188,7 +198,27 @@ class TestEvaluatePair:
         result = evaluate_pair(config, _make_test_case(), invalid_pair, logger)
         assert result.overall_score == 0.0
         assert result.needs_human_review is True
-        assert "invalid capture" in result.reason.lower()
+        assert result.reason == "Question input or response capture not verified"
+
+    def test_fallback_when_new_response_not_detected(self):
+        config = _make_config(api_key="sk-test")
+        logger = MagicMock()
+        from dataclasses import replace
+
+        pair = replace(_make_pair(), new_bot_response_detected=False)
+        result = evaluate_pair(config, _make_test_case(), pair, logger)
+        assert result.overall_score == 0.0
+        assert result.reason == "Question input or response capture not verified"
+
+    def test_fallback_when_baseline_menu_detected(self):
+        config = _make_config(api_key="sk-test")
+        logger = MagicMock()
+        from dataclasses import replace
+
+        pair = replace(_make_pair(), baseline_menu_detected=True)
+        result = evaluate_pair(config, _make_test_case(), pair, logger)
+        assert result.overall_score == 0.0
+        assert result.reason == "Question input or response capture not verified"
 
     def test_evaluation_proceeds_when_echo_unverified_but_input_verified(self):
         """Echo check failure alone must not block evaluation."""

@@ -1,19 +1,23 @@
 # Samsung Rubicon QA
 
-이 프로젝트는 GitHub PR 댓글 응답 agent가 아니라, 실제 삼성닷컴 챗봇 실행 agent다.
+이 프로젝트는 GitHub PR 댓글 응답 agent가 아니다.
+이 프로젝트는 실제 삼성닷컴 상담 챗창 질문-답변 실행 agent다.
 
 대상은 공개 페이지인 <https://www.samsung.com/sec/> 뿐이며, 로그인 자동화는 구현하지 않는다. 목표는 Codespaces 안에서 실제 브라우저를 띄우고 우측 하단 루비콘 아이콘을 눌러 챗봇을 연 뒤, 질문을 실제로 입력하고, 새 답변만 저장하고, 그 실제 답변만 OpenAI로 평가하는 것이다.
 
-사용자가 결과를 확인할 때 가장 먼저 봐야 할 파일은 reports/latest_conversation.md 이다.
+사용자가 결과를 볼 때 가장 먼저 봐야 할 파일은 reports/latest_conversation.md 이다.
 이 파일에 질문, 입력 검증 여부, 새 응답 여부, 실제 답변, 평가 결과, 스크린샷 경로를 모두 기록하라.
-mock answer, simulated result, 예시 리포트는 절대 생성하지 마라.
+before_send 스크린샷은 질문 입력 성공 증거다.
+after_answer 스크린샷은 새 답변 생성 증거다.
+mock answer나 simulated result는 절대 생성하지 않는다.
 
 ## 결과 확인 순서
 
 1. reports/latest_conversation.md
 2. reports/latest_results.json
-3. artifacts/chatbox/*_before_send.png 와 artifacts/chatbox/*_after_answer.png
+3. reports/latest_results.csv
 4. reports/summary.md
+5. artifacts/chatbox/*_before_send.png 와 artifacts/chatbox/*_after_answer.png
 
 콘솔 로그도 같은 우선순위로 결과 경로를 출력한다.
 
@@ -199,12 +203,33 @@ artifacts/trace/{timestamp}_{case}.zip
 - 질문
 - 입력 검증 여부
 - 입력 방식
+- 질문 echo 여부
 - 새 응답 감지 여부
 - baseline menu 감지 여부
 - 실제 답변
 - 평가 결과
 - opened, before_send, after_send, after_answer 스크린샷 경로
 - trace, video, html fragment 경로
+
+콘솔도 케이스마다 아래 순서로 출력한다.
+
+```text
+==================================================
+CASE: case01
+QUESTION: 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?
+INPUT VERIFIED: True
+INPUT METHOD: press_sequentially
+QUESTION ECHO VERIFIED: True
+NEW BOT RESPONSE RECEIVED: True
+BASELINE MENU DETECTED: False
+ANSWER: ...
+OVERALL SCORE: 0.84
+NEEDS HUMAN REVIEW: False
+CHECK FIRST: reports/latest_conversation.md
+BEFORE SEND SCREENSHOT: artifacts/chatbox/..._before_send.png
+AFTER ANSWER SCREENSHOT: artifacts/chatbox/..._after_answer.png
+==================================================
+```
 
 ### reports/latest_results.json
 
