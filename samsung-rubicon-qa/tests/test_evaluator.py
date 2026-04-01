@@ -180,6 +180,44 @@ class TestEvaluatePair:
         assert result.needs_human_review is True
         assert result.reason == "Question input not verified"
 
+    def test_fallback_when_invalid_capture(self):
+        config = _make_config(api_key="sk-test")
+        logger = MagicMock()
+        from dataclasses import replace
+        invalid_pair = replace(_make_pair(), status="invalid_capture", input_verified=False)
+        result = evaluate_pair(config, _make_test_case(), invalid_pair, logger)
+        assert result.overall_score == 0.0
+        assert result.needs_human_review is True
+        assert "invalid capture" in result.reason.lower()
+
+    def test_evaluation_proceeds_when_echo_unverified_but_input_verified(self):
+        """Echo check failure alone must not block evaluation."""
+        import json
+        config = _make_config(api_key="sk-test")
+        logger = MagicMock()
+        from dataclasses import replace
+        # input verified, echo NOT verified — evaluation should still run
+        pair_no_echo = replace(_make_pair(), user_message_echo_verified=False)
+        payload = {
+            "overall_score": 0.8,
+            "relevance_score": 0.8,
+            "clarity_score": 0.8,
+            "completeness_score": 0.8,
+            "keyword_alignment_score": 0.8,
+            "hallucination_risk": "low",
+            "needs_human_review": False,
+            "reason": "ok",
+            "fix_suggestion": "",
+        }
+        mock_response = MagicMock()
+        mock_response.output_text = json.dumps(payload)
+        with patch("app.evaluator.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.responses.create.return_value = mock_response
+            result = evaluate_pair(config, _make_test_case(), pair_no_echo, logger)
+        assert result.overall_score == 0.8
+
     def test_openai_success(self):
         import json
 

@@ -78,6 +78,20 @@ class TestExtractedPair:
         assert pair.input_method_used == ""
         assert pair.before_send_screenshot_path == ""
         assert pair.font_fix_applied is False
+        assert pair.user_message_echo_verified is False
+
+    def test_invalid_capture_status(self):
+        from dataclasses import replace
+        pair = _make_pair()
+        invalid = replace(pair, status="invalid_capture", input_verified=False)
+        assert invalid.status == "invalid_capture"
+        assert invalid.input_verified is False
+
+    def test_echo_verified_field(self):
+        from dataclasses import replace
+        pair = _make_pair()
+        echoed = replace(pair, user_message_echo_verified=True)
+        assert echoed.user_message_echo_verified is True
 
 
 class TestRunResult:

@@ -102,9 +102,16 @@ def _response_text(response: Any) -> str:
 def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, logger: Any) -> EvalResult:
     """Evaluate a question-answer pair with OpenAI Structured Outputs."""
 
-    if not pair.input_verified:
+    if not pair.input_verified or pair.status == "invalid_capture":
+        reason = (
+            "Invalid capture: question input was not verified"
+            if pair.status == "invalid_capture"
+            else "Question input not verified"
+        )
         logger.warning(
-            "Input verification failed for case %s; skipping GPT evaluation", pair.case_id
+            "Input verification failed for case %s (status=%s); skipping GPT evaluation",
+            pair.case_id,
+            pair.status,
         )
         logger.info("evaluation completed")
         return EvalResult(
@@ -115,7 +122,7 @@ def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, l
             keyword_alignment_score=0.0,
             hallucination_risk="high",
             needs_human_review=True,
-            reason="Question input not verified",
+            reason=reason,
             fix_suggestion="Check logs and before-send screenshots for input failure details",
         )
 

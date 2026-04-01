@@ -46,7 +46,7 @@ def run(project_root: Path | None = None) -> list[RunResult]:
 
             evaluation = (
                 evaluate_pair(config, test_case, pair, logger)
-                if pair.answer and pair.input_verified
+                if pair.answer and pair.input_verified and pair.status != "invalid_capture"
                 else fallback_evaluation()
             )
             results.append(RunResult(test_case=test_case, pair=pair, evaluation=evaluation))

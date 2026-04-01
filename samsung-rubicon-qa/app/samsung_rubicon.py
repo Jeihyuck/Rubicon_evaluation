@@ -51,6 +51,13 @@ BOT_MESSAGE_CANDIDATES = [
     {"type": "text", "value": compile_regex(r"서비스센터|삼성닷컴|도와드리|안내드리")},
 ]
 
+USER_MESSAGE_CANDIDATES = [
+    {"type": "css", "value": ".user-message, [data-message-author='user'], [data-author='user'], [data-author='customer']"},
+    {"type": "css", "value": "[class*='user' i][class*='message' i], [class*='customer' i][class*='message' i]"},
+    {"type": "css", "value": "[class*='outgoing' i], [class*='sent' i], [class*='right' i][class*='message' i]"},
+    {"type": "css", "value": "[role='log'] [data-message-author='user'], [role='list'] [data-message-author='user']"},
+]
+
 HISTORY_CANDIDATES = [
     {"type": "css", "value": "[role='log'] *"},
     {"type": "css", "value": "[role='list'] *"},
@@ -83,6 +90,10 @@ KOREAN_FONT_CSS = (
     '* { font-family: "Noto Sans KR", "Noto Sans CJK KR", "Nanum Gothic",'
     ' "Apple SD Gothic Neo", sans-serif !important; }'
 )
+
+# Delay (ms / s) after submit to let the UI render the user-message bubble
+ECHO_RENDER_DELAY_MS = 600
+ECHO_RENDER_DELAY_SEC = ECHO_RENDER_DELAY_MS / 1000.0
 
 
 @dataclass(slots=True)
@@ -354,6 +365,59 @@ def verify_input_text(locator: Locator, question: str, input_type: str) -> bool:
         return False
 
 
+def verify_user_message_echo(context: ResolvedChatContext, question: str, logger: Any) -> bool:
+    """Return True if the submitted question appears as a user message bubble.
+
+    After the question is sent, the chat should echo it back as a user-side
+    message element.  This check tries specific user-message selectors first,
+    then falls back to searching all chat history nodes for the question text.
+    The check is best-effort: a ``False`` result is logged but does not by
+    itself fail the case (it contributes to the overall verification signal).
+    """
+
+    scope = context.scope
+    question_norm = " ".join(question.strip().split())
+
+    # 1. Try dedicated user-message CSS selectors
+    for candidate in USER_MESSAGE_CANDIDATES:
+        try:
+            locator = build_locator(scope, candidate)
+            if locator is None:
+                continue
+            count = locator.count()
+            for i in range(count):
+                try:
+                    text = locator.nth(i).inner_text(timeout=1000).strip()
+                    if question_norm in " ".join(text.split()):
+                        logger.info("[ECHO] user message echo confirmed via user-message selector")
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    # 2. Fallback: scan all history candidates for the question text
+    for candidate in context.history_candidates:
+        try:
+            locator = build_locator(scope, candidate)
+            if locator is None:
+                continue
+            count = locator.count()
+            for i in range(count):
+                try:
+                    text = locator.nth(i).inner_text(timeout=1000).strip()
+                    if question_norm in " ".join(text.split()):
+                        logger.info("[ECHO] user message echo confirmed via history scan")
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    logger.warning("[ECHO] user message echo not found in chat DOM (best-effort)")
+    return False
+
+
 def _try_fill(locator: Locator, question: str, input_type: str, logger: Any) -> bool:
     try:
         locator.fill(question, timeout=2500)
@@ -522,13 +586,23 @@ def submit_question(
     page: Page,
     context: ResolvedChatContext,
     question: str,
-) -> tuple[bool, str, str]:
+) -> tuple[bool, str, str, bool]:
     """Submit *question* through the resolved chat input with DOM verification.
 
-    Returns ``(input_verified, input_method_used, before_send_chatbox_path)``.
-    The question is sent **only** if at least one input strategy passes
-    text-content verification.  On total failure the function raises
-    ``RuntimeError`` so the caller can mark the case as failed.
+    Returns ``(input_verified, input_method_used, before_send_chatbox_path, echo_verified)``.
+
+    Three verification steps are performed:
+
+    1. **DOM value verification** — confirmed by ``enter_question_with_verification()``
+       before the send action.
+    2. **before-send screenshot** — captured immediately after DOM verification,
+       providing visual proof of the typed text.
+    3. **user message echo** — after sending, checks that the question appears as a
+       user-side chat bubble in the DOM.
+
+    The question is sent **only** if DOM verification passes.  On total DOM
+    verification failure the function raises ``RuntimeError`` so the caller can
+    mark the case as ``invalid_capture``.
     """
 
     runtime = _runtime()
@@ -564,15 +638,26 @@ def submit_question(
         try:
             context.send_locator.click(timeout=2500)
             runtime.logger.info("[INPUT] send clicked")
-            runtime.logger.info("question submitted")
-            return input_verified, method_used, before_send_chatbox
         except Exception:
-            pass
+            context.input_locator.press("Enter")
+            runtime.logger.info("[INPUT] send clicked (Enter key fallback)")
+    else:
+        context.input_locator.press("Enter")
+        runtime.logger.info("[INPUT] send clicked (Enter key)")
 
-    context.input_locator.press("Enter")
-    runtime.logger.info("[INPUT] send clicked (Enter key)")
     runtime.logger.info("question submitted")
-    return input_verified, method_used, before_send_chatbox
+
+    # Short pause to allow the UI to render the user-message bubble before echo check
+    try:
+        if hasattr(context.scope, "wait_for_timeout"):
+            context.scope.wait_for_timeout(ECHO_RENDER_DELAY_MS)
+        else:
+            time.sleep(ECHO_RENDER_DELAY_SEC)
+    except Exception:
+        pass
+
+    echo_verified = verify_user_message_echo(context, question, runtime.logger)
+    return input_verified, method_used, before_send_chatbox, echo_verified
 
 
 def _loading_visible(context: ResolvedChatContext) -> bool:
@@ -678,6 +763,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     input_method_used = ""
     before_send_screenshot_path = ""
     font_fix_applied = False
+    user_message_echo_verified = False
 
     try:
         open_homepage(page)
@@ -696,39 +782,63 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         )
 
         context = resolve_chat_context(page)
-        input_verified, input_method_used, before_send_screenshot_path = submit_question(
+        input_verified, input_method_used, before_send_screenshot_path, user_message_echo_verified = submit_question(
             page, context, test_case.question
         )
-        answer, response_ms = wait_for_answer_completion(context)
 
-        _capture_stage(
-            page,
-            context,
-            test_case.id,
-            runtime.current_case_timestamp,
-            "after_answer",
-            runtime.config,
-            runtime.logger,
-        )
+        # Core verification gate: DOM value check (input_verified) is mandatory.
+        # The before-send screenshot is captured inside submit_question already.
+        # Echo check is best-effort; a failure is logged but not alone sufficient
+        # to invalidate the capture — the DOM verification is the hard gate.
+        if not input_verified:
+            status = "invalid_capture"
+            error_message = "DOM input verification failed — question was not confirmed in input element"
+            runtime.logger.error("[VERIFY] invalid capture: DOM input verification failed for %s", test_case.id)
+        else:
+            answer, response_ms = wait_for_answer_completion(context)
 
-        artifacts = capture_artifacts(page, context, test_case.id)
+            _capture_stage(
+                page,
+                context,
+                test_case.id,
+                runtime.current_case_timestamp,
+                "after_answer",
+                runtime.config,
+                runtime.logger,
+            )
 
-        dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
-        if dom_payload["success"]:
-            answer = dom_payload["answer"]
-            extraction_source = "dom"
-            extraction_confidence = 1.0
-            runtime.logger.info("DOM extracted")
-        elif runtime.config.enable_ocr_fallback and artifacts.chatbox_screenshot is not None:
-            ocr_text, confidence = extract_text_from_image(artifacts.chatbox_screenshot, runtime.logger)
-            if ocr_text:
-                answer = ocr_text
-                extraction_source = "ocr"
-                extraction_confidence = confidence
-                runtime.logger.info("OCR fallback used")
+            artifacts = capture_artifacts(page, context, test_case.id)
 
-        if not answer:
-            raise RuntimeError("No answer text could be extracted from DOM or OCR")
+            dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
+            if dom_payload["success"]:
+                answer = dom_payload["answer"]
+                extraction_source = "dom"
+                extraction_confidence = 1.0
+                runtime.logger.info("DOM extracted")
+            elif runtime.config.enable_ocr_fallback and artifacts.chatbox_screenshot is not None:
+                ocr_text, confidence = extract_text_from_image(artifacts.chatbox_screenshot, runtime.logger)
+                if ocr_text:
+                    answer = ocr_text
+                    extraction_source = "ocr"
+                    extraction_confidence = confidence
+                    runtime.logger.info("OCR fallback used")
+
+            if not answer:
+                raise RuntimeError("No answer text could be extracted from DOM or OCR")
+    except RuntimeError as exc:
+        # RuntimeError raised by submit_question means input was never verified
+        err_str = str(exc)
+        if "not verified" in err_str:
+            status = "invalid_capture"
+        else:
+            status = "failed"
+        error_message = err_str
+        runtime.logger.error("exception details: %s", exc)
+        try:
+            if artifacts.fullpage_screenshot is None and artifacts.chatbox_screenshot is None:
+                artifacts = capture_artifacts(page, context, test_case.id)
+        except Exception:
+            pass
     except Exception as exc:
         status = "failed"
         error_message = str(exc)
@@ -761,5 +871,6 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         input_method_used=input_method_used,
         before_send_screenshot_path=before_send_screenshot_path,
         font_fix_applied=font_fix_applied,
+        user_message_echo_verified=user_message_echo_verified,
     )
 

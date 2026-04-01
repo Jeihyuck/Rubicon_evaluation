@@ -34,7 +34,7 @@ class ExtractedPair:
     extraction_source: Literal["dom", "ocr", "unknown"]
     extraction_confidence: float
     response_ms: int
-    status: Literal["passed", "failed"]
+    status: Literal["passed", "failed", "invalid_capture"]
     error_message: str = ""
     full_screenshot_path: str = ""
     chat_screenshot_path: str = ""
@@ -45,6 +45,7 @@ class ExtractedPair:
     input_method_used: str = ""
     before_send_screenshot_path: str = ""
     font_fix_applied: bool = False
+    user_message_echo_verified: bool = False
 
 
 @dataclass(slots=True)
