@@ -1,12 +1,12 @@
 # Samsung Rubicon QA
 
-삼성닷컴 공개 영역인 https://www.samsung.com/sec/ 에서 로그인 없이 Rubicon 챗봇을 실제 브라우저 UI로 조작하고, 질문-답변 pair를 수집한 뒤 OpenAI Responses API로 평가하는 QA 및 회귀 테스트 프로젝트다.
+삼성닷컴 공개 영역인 <https://www.samsung.com/sec/> 에서 로그인 없이 Rubicon 챗봇을 실제 브라우저 UI로 조작하고, 질문-답변 pair를 수집한 뒤 OpenAI Responses API로 평가하는 QA 및 회귀 테스트 프로젝트다.
 
 이 프로젝트의 핵심은 OCR이 아니라 브라우저 DOM 기반 질문-답변 pair 수집이며, OCR은 DOM 추출 실패 시에만 백업으로 사용한다.
 
 ## 프로젝트 개요
 
-- 대상 페이지: https://www.samsung.com/sec/
+- 대상 페이지: <https://www.samsung.com/sec/>
 - 로그인 시도 금지: 로그인 버튼 클릭, 계정 인증 플로우 진입, 세션 우회 로직을 구현하지 않는다.
 - 수집 방식: DOM 텍스트 추출 우선, 실패 시에만 OCR fallback 사용
 - 증적 보존: 전체 페이지 스크린샷, 챗 박스 스크린샷, Playwright video, Playwright trace 저장
@@ -50,7 +50,7 @@ samsung-rubicon-qa/
 
 ## 동작 흐름
 
-1. https://www.samsung.com/sec/ 접속
+1. <https://www.samsung.com/sec/> 접속
 2. 한국어 폰트 CSS 주입 (Noto Sans KR / Nanum Gothic)
 3. 팝업 또는 배너가 챗 UI를 가리면 닫기
 4. 우하단 Rubicon 아이콘 또는 챗 런처 찾기
@@ -195,7 +195,7 @@ testcases/questions.csv 컬럼:
 따라서 이 프로젝트는 4단계 전략을 순서대로 시도하고, 각 단계마다 DOM 값을 읽어서 일치 여부를 확인한다:
 
 | 단계 | 방법 | 설명 |
-|------|------|------|
+| ------ | ------ | ------ |
 | 1 | `locator.fill()` | 가장 빠르고 안정적 |
 | 2 | `locator.press_sequentially()` | 한 글자씩 타이핑, 비디오에 보임 |
 | 3 | `page.keyboard.type()` | 포커스 후 직접 키보드 입력 |
@@ -270,7 +270,7 @@ Playwright Inspector (`PWDEBUG=1`)는 브라우저를 천천히 실행하며 각
 `reports/latest_results.json`의 `pair` 섹션에는 아래 필드가 추가됐다.
 
 | 필드 | 타입 | 설명 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `input_verified` | bool | DOM 기준 입력 텍스트 확인 성공 여부 |
 | `input_method_used` | string | 실제로 사용된 입력 방식 (`fill`, `press_sequentially`, `keyboard`, `js`) |
 | `before_send_screenshot_path` | string | 전송 전 챗박스 스크린샷 경로 |
