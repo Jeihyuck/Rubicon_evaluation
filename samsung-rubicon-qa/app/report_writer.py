@@ -57,6 +57,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
             [
                 "",
                 f"## {pair.case_id}",
+                "",
                 f"- Question: {pair.question}",
                 f"- Question Echo In Chat: {echo_text}",
                 f"- Extracted Answer: {pair.answer or '(none)'}",
@@ -74,6 +75,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
                 f"- Video: {pair.video_path or '(none)'}",
                 "",
                 "### Message History",
+                "",
             ]
         )
 
