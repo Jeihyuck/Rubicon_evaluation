@@ -28,6 +28,14 @@ class TestAppConfigPaths:
             enable_video=False,
             enable_trace=False,
             enable_ocr_fallback=False,
+            rubicon_chat_debug=False,
+            rubicon_force_activation=True,
+            rubicon_disable_sdk=False,
+            rubicon_max_input_candidates=5,
+            rubicon_frame_rescan_rounds=3,
+            rubicon_before_send_screenshot=True,
+            rubicon_opened_footer_screenshot=True,
+            rubicon_after_answer_screenshot=True,
         )
         assert config.artifacts_dir == tmp_path / "artifacts"
         assert config.fullpage_dir == tmp_path / "artifacts" / "fullpage"
@@ -53,6 +61,14 @@ class TestAppConfigPaths:
             enable_video=False,
             enable_trace=False,
             enable_ocr_fallback=False,
+            rubicon_chat_debug=False,
+            rubicon_force_activation=True,
+            rubicon_disable_sdk=False,
+            rubicon_max_input_candidates=5,
+            rubicon_frame_rescan_rounds=3,
+            rubicon_before_send_screenshot=True,
+            rubicon_opened_footer_screenshot=True,
+            rubicon_after_answer_screenshot=True,
         )
         config.ensure_directories()
         assert config.fullpage_dir.is_dir()
@@ -73,7 +89,13 @@ class TestLoadConfig:
         assert config.samsung_base_url == "https://www.samsung.com/sec/"
         assert config.headless is False
         assert config.max_questions == 5
+        assert config.enable_video is False
+        assert config.enable_trace is False
         assert config.enable_ocr_fallback is False
+        assert config.rubicon_force_activation is True
+        assert config.rubicon_disable_sdk is False
+        assert config.rubicon_max_input_candidates == 5
+        assert config.rubicon_frame_rescan_rounds == 3
 
     def test_env_overrides(self, tmp_path: Path):
         env = {
@@ -84,6 +106,11 @@ class TestLoadConfig:
             "ENABLE_VIDEO": "false",
             "ENABLE_TRACE": "false",
             "ENABLE_OCR_FALLBACK": "true",
+            "RUBICON_CHAT_DEBUG": "true",
+            "RUBICON_FORCE_ACTIVATION": "false",
+            "RUBICON_DISABLE_SDK": "true",
+            "RUBICON_MAX_INPUT_CANDIDATES": "4",
+            "RUBICON_FRAME_RESCAN_ROUNDS": "2",
         }
         with patch.dict(os.environ, env, clear=True):
             config = load_config(tmp_path)
@@ -93,6 +120,11 @@ class TestLoadConfig:
         assert config.enable_video is False
         assert config.enable_trace is False
         assert config.enable_ocr_fallback is True
+        assert config.rubicon_chat_debug is True
+        assert config.rubicon_force_activation is False
+        assert config.rubicon_disable_sdk is True
+        assert config.rubicon_max_input_candidates == 4
+        assert config.rubicon_frame_rescan_rounds == 2
 
     def test_project_root_defaults_to_package_parent(self):
         config = load_config()

@@ -39,7 +39,9 @@ def _make_pair(case_id: str = "c01") -> ExtractedPair:
         extraction_source="dom",
         extraction_confidence=1.0,
         response_ms=1000,
-        status="passed",
+        status="success",
+        answer_raw="서비스센터에서 가능합니다.",
+        answer_normalized="서비스센터에서 가능합니다.",
     )
 
 
@@ -75,6 +77,7 @@ class TestExtractedPair:
         assert pair.video_path == ""
         assert pair.trace_path == ""
         assert pair.html_fragment_path == ""
+        assert pair.fix_suggestion == ""
         assert pair.input_dom_verified is False
         assert pair.submit_effect_verified is False
         assert pair.input_verified is False
@@ -82,6 +85,24 @@ class TestExtractedPair:
         assert pair.submit_method_used == "unknown"
         assert pair.opened_chat_screenshot_path == ""
         assert pair.opened_full_screenshot_path == ""
+        assert pair.opened_footer_screenshot_path == ""
+        assert pair.open_method_used == ""
+        assert pair.sdk_status == ""
+        assert pair.availability_status == ""
+        assert pair.input_scope == ""
+        assert pair.input_scope_name == ""
+        assert pair.input_selector == ""
+        assert pair.input_failure_category == ""
+        assert pair.input_failure_reason == ""
+        assert pair.input_candidate_score == 0.0
+        assert pair.top_candidate_disabled is False
+        assert pair.activation_attempted is False
+        assert pair.activation_steps_tried == ""
+        assert pair.editable_candidates_count == 0
+        assert pair.failover_attempts == 0
+        assert pair.final_input_target_frame == ""
+        assert pair.input_candidates_debug == ""
+        assert pair.input_candidate_logs == []
         assert pair.before_send_screenshot_path == ""
         assert pair.before_send_full_screenshot_path == ""
         assert pair.after_send_screenshot_path == ""
@@ -90,6 +111,12 @@ class TestExtractedPair:
         assert pair.user_message_echo_verified is False
         assert pair.new_bot_response_detected is False
         assert pair.baseline_menu_detected is False
+        assert pair.answer_screenshot_paths == []
+        assert pair.after_answer_multi_page is False
+        assert pair.ocr_text == ""
+        assert pair.ocr_confidence == 0.0
+        assert pair.structured_message_history_count == 0
+        assert pair.fallback_diff_used is False
 
     def test_invalid_capture_status(self):
         pair = _make_pair()
@@ -128,8 +155,32 @@ class TestRunResult:
         assert record["case_id"] == "c01"
         assert record["question"] == "배터리 교체는 어디서?"
         assert record["answer"] == "서비스센터에서 가능합니다."
+        assert record["answer_raw"] == "서비스센터에서 가능합니다."
+        assert record["answer_normalized"] == "서비스센터에서 가능합니다."
         assert record["input_dom_verified"] is False
         assert record["submit_effect_verified"] is False
+        assert record["after_answer_multi_page"] is False
+        assert record["structured_message_history_count"] == 0
+        assert record["fallback_diff_used"] is False
+        assert record["actual_answer"] == "서비스센터에서 가능합니다."
+        assert record["input_scope"] == ""
+        assert record["top_candidate_disabled"] is False
+        assert record["activation_attempted"] is False
+        assert record["activation_steps_tried"] == ""
+        assert record["editable_candidates_count"] == 0
+        assert record["failover_attempts"] == 0
+        assert record["final_input_target_frame"] == ""
+        assert record["open_method_used"] == ""
+        assert record["sdk_status"] == ""
+        assert record["availability_status"] == ""
+        assert record["input_candidates_debug"] == ""
+        assert record["opened_footer_screenshot_path"] == ""
+        assert record["input_scope_name"] == ""
+        assert record["input_selector"] == ""
+        assert record["input_failure_category"] == ""
+        assert record["input_failure_reason"] == ""
+        assert record["input_candidate_score"] == 0.0
+        assert record["input_candidate_logs"] == []
         assert record["overall_score"] == 0.9
         assert record["needs_human_review"] is False
         assert record["fix_suggestion"] == ""
@@ -144,9 +195,13 @@ class TestRunResult:
         )
         flat = result.to_flat_dict()
         assert "id" in flat
+        assert "answer" in flat
+        assert "input_scope" in flat
+        assert "open_method_used" in flat
         assert "pair_answer" in flat
         assert "eval_overall_score" in flat
         assert flat["id"] == "c01"
+        assert flat["answer"] == "서비스센터에서 가능합니다."
         assert flat["pair_answer"] == "서비스센터에서 가능합니다."
         assert flat["eval_overall_score"] == 0.9
 
@@ -207,3 +262,11 @@ class TestExtractedPairNewFields:
         result = RunResult(test_case=_make_test_case(), pair=pair, evaluation=_make_eval())
         nested = result.to_nested_dict()
         assert nested["pair"]["message_history"] == ["msg1"]
+
+    def test_answer_screenshot_paths_default_empty(self):
+        pair = _make_pair()
+        assert pair.answer_screenshot_paths == []
+
+    def test_answer_normalized_stored(self):
+        pair = replace(_make_pair(), answer_normalized="정리된 답변")
+        assert pair.answer_normalized == "정리된 답변"

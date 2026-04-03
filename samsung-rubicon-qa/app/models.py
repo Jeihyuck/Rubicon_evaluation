@@ -34,7 +34,10 @@ class ExtractedPair:
     extraction_source: Literal["dom", "ocr", "unknown"]
     extraction_confidence: float
     response_ms: int
-    status: Literal["passed", "failed", "invalid_capture"]
+    status: Literal["success", "failed", "invalid_capture"]
+    answer_raw: str = ""
+    answer_normalized: str = ""
+    actual_answer: str = ""
     reason: str = ""
     error_message: str = ""
     full_screenshot_path: str = ""
@@ -42,6 +45,7 @@ class ExtractedPair:
     video_path: str = ""
     trace_path: str = ""
     html_fragment_path: str = ""
+    fix_suggestion: str = ""
     input_dom_verified: bool = False
     submit_effect_verified: bool = False
     input_verified: bool = False
@@ -49,6 +53,24 @@ class ExtractedPair:
     submit_method_used: str = "unknown"
     opened_chat_screenshot_path: str = ""
     opened_full_screenshot_path: str = ""
+    opened_footer_screenshot_path: str = ""
+    open_method_used: str = ""
+    sdk_status: str = ""
+    availability_status: str = ""
+    input_scope: str = ""
+    input_scope_name: str = ""
+    input_selector: str = ""
+    input_failure_category: str = ""
+    input_failure_reason: str = ""
+    input_candidate_score: float = 0.0
+    top_candidate_disabled: bool = False
+    activation_attempted: bool = False
+    activation_steps_tried: str = ""
+    editable_candidates_count: int = 0
+    failover_attempts: int = 0
+    final_input_target_frame: str = ""
+    input_candidates_debug: str = ""
+    input_candidate_logs: list[str] = field(default_factory=list)
     before_send_screenshot_path: str = ""
     before_send_full_screenshot_path: str = ""
     after_send_screenshot_path: str = ""
@@ -59,6 +81,12 @@ class ExtractedPair:
     user_message_echo_verified: bool = False
     new_bot_response_detected: bool = False
     baseline_menu_detected: bool = False
+    answer_screenshot_paths: list[str] = field(default_factory=list)
+    after_answer_multi_page: bool = False
+    ocr_text: str = ""
+    ocr_confidence: float = 0.0
+    structured_message_history_count: int = 0
+    fallback_diff_used: bool = False
     message_history: list[str] = field(default_factory=list)
 
 
@@ -98,6 +126,8 @@ class RunResult:
         """Flatten the result for CSV output."""
 
         data = asdict(self.test_case)
+        record = self.to_result_record()
+        data.update({key: value for key, value in record.items() if key != "evaluation"})
         data.update({f"pair_{key}": value for key, value in asdict(self.pair).items()})
         data.update({f"eval_{key}": value for key, value in asdict(self.evaluation).items()})
         return data
@@ -113,6 +143,9 @@ class RunResult:
             "locale": self.pair.locale,
             "question": self.pair.question,
             "answer": self.pair.answer,
+            "answer_raw": self.pair.answer_raw,
+            "answer_normalized": self.pair.answer_normalized,
+            "actual_answer": self.pair.actual_answer or self.pair.answer,
             "input_dom_verified": self.pair.input_dom_verified,
             "submit_effect_verified": self.pair.submit_effect_verified,
             "input_verified": self.pair.input_verified,
@@ -122,27 +155,52 @@ class RunResult:
             "new_bot_response_detected": self.pair.new_bot_response_detected,
             "baseline_menu_detected": self.pair.baseline_menu_detected,
             "status": self.pair.status,
+            "error_message": self.pair.error_message,
             "reason": self.pair.reason,
+            "fix_suggestion": self.pair.fix_suggestion or self.evaluation.fix_suggestion,
+            "message_history": self.pair.message_history,
+            "html_fragment_path": self.pair.html_fragment_path,
+            "extraction_source": self.pair.extraction_source,
+            "ocr_text": self.pair.ocr_text,
+            "ocr_confidence": self.pair.ocr_confidence,
+            "structured_message_history_count": self.pair.structured_message_history_count,
+            "fallback_diff_used": self.pair.fallback_diff_used,
+            "input_scope": self.pair.input_scope or self.pair.input_scope_name,
+            "input_selector": self.pair.input_selector,
+            "input_candidate_score": self.pair.input_candidate_score,
+            "input_failure_category": self.pair.input_failure_category,
+            "input_failure_reason": self.pair.input_failure_reason,
+            "top_candidate_disabled": self.pair.top_candidate_disabled,
+            "activation_attempted": self.pair.activation_attempted,
+            "activation_steps_tried": self.pair.activation_steps_tried,
+            "editable_candidates_count": self.pair.editable_candidates_count,
+            "failover_attempts": self.pair.failover_attempts,
+            "final_input_target_frame": self.pair.final_input_target_frame,
+            "open_method_used": self.pair.open_method_used,
+            "sdk_status": self.pair.sdk_status,
+            "availability_status": self.pair.availability_status,
+            "input_candidates_debug": self.pair.input_candidates_debug,
             "before_send_screenshot_path": self.pair.before_send_screenshot_path,
+            "after_send_screenshot_path": self.pair.after_send_screenshot_path,
             "after_answer_screenshot_path": self.pair.after_answer_screenshot_path,
+            "answer_screenshot_paths": self.pair.answer_screenshot_paths,
+            "after_answer_multi_page": self.pair.after_answer_multi_page,
             "full_screenshot_path": self.pair.full_screenshot_path,
-            "video_path": self.pair.video_path,
-            "trace_path": self.pair.trace_path,
             "overall_score": self.evaluation.overall_score,
             "needs_human_review": self.evaluation.needs_human_review,
-            "fix_suggestion": self.evaluation.fix_suggestion,
             "response_ms": self.pair.response_ms,
-            "extraction_source": self.pair.extraction_source,
             "extraction_confidence": self.pair.extraction_confidence,
             "opened_chat_screenshot_path": self.pair.opened_chat_screenshot_path,
             "opened_full_screenshot_path": self.pair.opened_full_screenshot_path,
+            "opened_footer_screenshot_path": self.pair.opened_footer_screenshot_path,
+            "input_scope_name": self.pair.input_scope_name,
+            "input_candidate_logs": self.pair.input_candidate_logs,
             "before_send_full_screenshot_path": self.pair.before_send_full_screenshot_path,
-            "after_send_screenshot_path": self.pair.after_send_screenshot_path,
             "after_send_full_screenshot_path": self.pair.after_send_full_screenshot_path,
             "after_answer_full_screenshot_path": self.pair.after_answer_full_screenshot_path,
             "chat_screenshot_path": self.pair.chat_screenshot_path,
-            "html_fragment_path": self.pair.html_fragment_path,
-            "error_message": self.pair.error_message,
+            "video_path": self.pair.video_path,
+            "trace_path": self.pair.trace_path,
             "evaluation": asdict(self.evaluation),
         }
 
@@ -153,17 +211,31 @@ class ResolvedChatContext:
 
     scope: Any
     scope_name: str
-    input_locator: Any
+    input_locator: Any | None
     send_locator: Any | None
     container_locator: Any | None
     bot_message_candidates: list[dict[str, Any]]
     history_candidates: list[dict[str, Any]]
     loading_candidates: list[dict[str, Any]]
+    page: Any | None = None
+    input_scope: Any | None = None
+    input_scope_name: str = ""
+    input_selector: str = ""
+    input_failure_category: str = ""
+    input_failure_reason: str = ""
+    frame_inventory: list[dict[str, Any]] = field(default_factory=list)
+    ranked_input_candidates: list[dict[str, Any]] = field(default_factory=list)
+    input_candidates_debug: str = ""
     baseline_bot_count: int = 0
     baseline_bot_messages: list[str] = field(default_factory=list)
     baseline_history: list[str] = field(default_factory=list)
     baseline_visible_text: str = ""
+    baseline_message_nodes_snapshot: list[str] = field(default_factory=list)
+    baseline_visible_blocks: list[str] = field(default_factory=list)
     baseline_send_button_enabled: bool | None = None
+    chat_frame_score: int = 0
+    input_candidate_score: float = 0.0
+    input_candidate_logs: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

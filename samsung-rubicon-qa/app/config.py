@@ -32,6 +32,14 @@ class AppConfig:
     enable_video: bool
     enable_trace: bool
     enable_ocr_fallback: bool
+    rubicon_chat_debug: bool
+    rubicon_force_activation: bool
+    rubicon_disable_sdk: bool
+    rubicon_max_input_candidates: int
+    rubicon_frame_rescan_rounds: int
+    rubicon_before_send_screenshot: bool
+    rubicon_opened_footer_screenshot: bool
+    rubicon_after_answer_screenshot: bool
 
     @property
     def artifacts_dir(self) -> Path:
@@ -84,7 +92,8 @@ def load_config(project_root: Path | None = None) -> AppConfig:
 
     resolved_root = project_root or Path(__file__).resolve().parent.parent
     env_path = resolved_root / ".env"
-    load_dotenv(env_path if env_path.exists() else None)
+    if env_path.exists():
+        load_dotenv(env_path)
 
     return AppConfig(
         project_root=resolved_root,
@@ -97,7 +106,15 @@ def load_config(project_root: Path | None = None) -> AppConfig:
         playwright_timeout_ms=int(os.getenv("PLAYWRIGHT_TIMEOUT_MS", "30000")),
         answer_stable_checks=int(os.getenv("ANSWER_STABLE_CHECKS", "3")),
         answer_stable_interval_sec=float(os.getenv("ANSWER_STABLE_INTERVAL_SEC", "1.0")),
-        enable_video=_to_bool(os.getenv("ENABLE_VIDEO"), True),
-        enable_trace=_to_bool(os.getenv("ENABLE_TRACE"), True),
+        enable_video=_to_bool(os.getenv("ENABLE_VIDEO"), False),
+        enable_trace=_to_bool(os.getenv("ENABLE_TRACE"), False),
         enable_ocr_fallback=_to_bool(os.getenv("ENABLE_OCR_FALLBACK"), False),
+        rubicon_chat_debug=_to_bool(os.getenv("RUBICON_CHAT_DEBUG"), False),
+        rubicon_force_activation=_to_bool(os.getenv("RUBICON_FORCE_ACTIVATION"), True),
+        rubicon_disable_sdk=_to_bool(os.getenv("RUBICON_DISABLE_SDK"), False),
+        rubicon_max_input_candidates=int(os.getenv("RUBICON_MAX_INPUT_CANDIDATES", "5")),
+        rubicon_frame_rescan_rounds=int(os.getenv("RUBICON_FRAME_RESCAN_ROUNDS", "3")),
+        rubicon_before_send_screenshot=_to_bool(os.getenv("RUBICON_BEFORE_SEND_SCREENSHOT"), True),
+        rubicon_opened_footer_screenshot=_to_bool(os.getenv("RUBICON_OPENED_FOOTER_SCREENSHOT"), True),
+        rubicon_after_answer_screenshot=_to_bool(os.getenv("RUBICON_AFTER_ANSWER_SCREENSHOT"), True),
     )

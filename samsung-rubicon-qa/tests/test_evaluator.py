@@ -41,7 +41,9 @@ def _make_pair(answer: str = "서비스센터에서 가능합니다.") -> Extrac
         extraction_source="dom",
         extraction_confidence=1.0,
         response_ms=1000,
-        status="passed",
+        status="success",
+        answer_raw=answer,
+        answer_normalized=answer,
         input_dom_verified=True,
         submit_effect_verified=True,
         input_verified=True,
@@ -69,6 +71,14 @@ def _make_config(api_key: str = "test-key"):
         enable_video=False,
         enable_trace=False,
         enable_ocr_fallback=False,
+        rubicon_chat_debug=False,
+        rubicon_force_activation=True,
+        rubicon_disable_sdk=False,
+        rubicon_max_input_candidates=5,
+        rubicon_frame_rescan_rounds=3,
+        rubicon_before_send_screenshot=True,
+        rubicon_opened_footer_screenshot=True,
+        rubicon_after_answer_screenshot=True,
     )
 
 
@@ -201,7 +211,7 @@ class TestEvaluatePair:
         result = evaluate_pair(config, _make_test_case(), invalid_pair, logger)
         assert result.overall_score == 0.0
         assert result.needs_human_review is True
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
+        assert result.reason == "Invalid capture: capture_not_verified"
 
     def test_fallback_when_new_response_not_detected(self):
         config = _make_config(api_key="sk-test")

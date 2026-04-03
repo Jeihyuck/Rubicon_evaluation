@@ -55,7 +55,7 @@ def fallback_evaluation() -> EvalResult:
         hallucination_risk="high",
         needs_human_review=True,
         reason="OpenAI evaluation failed",
-        fix_suggestion="Check logs and screenshots",
+        fix_suggestion="Check before_send/after_send screenshots and submission logs",
     )
 
 
@@ -71,7 +71,35 @@ def _capture_not_verified_evaluation() -> EvalResult:
         hallucination_risk="high",
         needs_human_review=True,
         reason="Capture invalid: no verified submitted question and bot answer pair",
-        fix_suggestion="Check before_send/after_send screenshots and submission logs",
+        fix_suggestion="Check before_send/after_send screenshots, frame selection, and message diff logs",
+    )
+
+
+def _invalid_capture_evaluation(pair: ExtractedPair) -> EvalResult:
+    return EvalResult(
+        overall_score=0.0,
+        relevance_score=0.0,
+        clarity_score=0.0,
+        completeness_score=0.0,
+        keyword_alignment_score=0.0,
+        hallucination_risk="high",
+        needs_human_review=True,
+        reason=f"Invalid capture: {pair.input_failure_category or pair.reason or 'capture_not_verified'}",
+        fix_suggestion=pair.fix_suggestion or "Check runtime.log prefixes, activation steps, and screenshots",
+    )
+
+
+def _failed_answer_evaluation(pair: ExtractedPair) -> EvalResult:
+    return EvalResult(
+        overall_score=0.0,
+        relevance_score=0.0,
+        clarity_score=0.0,
+        completeness_score=0.0,
+        keyword_alignment_score=0.0,
+        hallucination_risk="high",
+        needs_human_review=True,
+        reason=pair.reason or "Execution failed before a valid answer was extracted",
+        fix_suggestion=pair.fix_suggestion or "Check open, submission, and extraction logs",
     )
 
 
@@ -118,14 +146,32 @@ def _response_text(response: Any) -> str:
 def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, logger: Any) -> EvalResult:
     """Evaluate a question-answer pair with OpenAI Structured Outputs."""
 
+    if pair.status == "invalid_capture":
+        logger.warning(
+            "Capture invalid for case %s (%s); using invalid-capture fallback evaluation",
+            pair.case_id,
+            pair.input_failure_category or pair.reason,
+        )
+        logger.info("evaluation completed")
+        return _invalid_capture_evaluation(pair)
+
+    if pair.status == "failed" and (not pair.answer_raw or pair.input_failure_category == "answer_not_extracted"):
+        logger.warning(
+            "Execution failed for case %s (%s); using failed-answer fallback evaluation",
+            pair.case_id,
+            pair.input_failure_category or pair.reason,
+        )
+        logger.info("evaluation completed")
+        return _failed_answer_evaluation(pair)
+
     if (
-        not pair.answer
-        or pair.answer == "(none)"
+        not pair.answer_raw
+        or not pair.answer_normalized
+        or pair.answer_normalized == "(none)"
         or not pair.input_verified
         or not pair.submit_effect_verified
         or not pair.new_bot_response_detected
         or pair.baseline_menu_detected
-        or pair.status == "invalid_capture"
     ):
         logger.warning(
             "Capture verification failed for case %s (status=%s); skipping GPT evaluation",
@@ -151,7 +197,7 @@ def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, l
         "page_url": pair.page_url,
         "locale": pair.locale,
         "question": pair.question,
-        "answer": pair.answer,
+        "answer": pair.answer_normalized,
         "expected_keywords": test_case.expected_keywords,
         "forbidden_keywords": test_case.forbidden_keywords,
         "input_verified": pair.input_verified,

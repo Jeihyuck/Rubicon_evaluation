@@ -23,9 +23,11 @@ def create_logger(log_path: Path) -> logging.Logger:
         logger.handlers.clear()
 
     stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(formatter)
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
 
     logger.addHandler(stream_handler)

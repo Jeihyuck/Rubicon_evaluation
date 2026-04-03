@@ -11,11 +11,19 @@ from playwright.sync_api import Frame, Locator, Page
 
 from app.config import AppConfig
 from app.dom_extractor import (
+    build_post_baseline_answer_candidates,
+    choose_best_answer_segment,
+    compute_new_text_segments,
     count_bot_messages,
+    diff_visible_text_against_baseline,
     extract_bot_message_texts,
     extract_dom_payload,
     extract_message_history_candidates,
+    extract_structured_message_history,
     extract_visible_chat_text,
+    extract_visible_text_blocks,
+    filter_out_static_ui_text,
+    normalize_text_for_diff,
 )
 from app.models import BrowserArtifacts, ExtractedPair, ResolvedChatContext, TestCase
 from app.ocr_fallback import extract_text_from_image
@@ -38,7 +46,54 @@ INPUT_CANDIDATES = [
     {"type": "label", "value": compile_regex(r"질문|문의|메시지|채팅|입력|message|chat")},
     {"type": "placeholder", "value": compile_regex(r"질문|문의|메시지|무엇을 도와|message|ask")},
     {"type": "css", "value": "textarea[placeholder*='메시지'], textarea[aria-label*='메시지'], textarea[placeholder*='message' i], textarea[aria-label*='message' i]"},
-    {"type": "css", "value": "textarea, input[type='text'], [contenteditable='true']"},
+    {"type": "css", "value": ".ql-editor, .DraftEditor-root [contenteditable='true']"},
+    {"type": "css", "value": "[placeholder*='질문' i], [placeholder*='입력' i], [placeholder*='메시지' i]"},
+    {"type": "css", "value": "[aria-label*='질문' i], [aria-label*='입력' i], [aria-label*='메시지' i]"},
+    {"type": "css", "value": "textarea, input[type='text'], input[type='search'], input:not([type]), [role='textbox'], [contenteditable='true'], div[contenteditable]"},
+]
+
+INPUT_SCAN_SELECTORS = [
+    ".ql-editor",
+    ".DraftEditor-root [contenteditable='true']",
+    "[placeholder*='질문' i]",
+    "[placeholder*='입력' i]",
+    "[placeholder*='메시지' i]",
+    "[aria-label*='질문' i]",
+    "[aria-label*='입력' i]",
+    "[aria-label*='메시지' i]",
+    "textarea",
+    "input[type='text']",
+    "input[type='search']",
+    "input:not([type])",
+    "[role='textbox']",
+    "[contenteditable='true']",
+    "[contenteditable='plaintext-only']",
+    "div[contenteditable]",
+    "textarea[placeholder]",
+    "textarea[aria-label]",
+    "input[placeholder]",
+    "input[aria-label]",
+    "[contenteditable][aria-label]",
+]
+
+_SPR_CHAT_TRIGGER_CANDIDATES = [
+    "#spr-chat__trigger-button",
+    "[aria-label*='chat' i]",
+    "[class*='chat' i]",
+    "button:has-text('채팅')",
+    "button:has-text('상담')",
+]
+
+_ACTIVATION_CANDIDATES = [
+    "button:has-text('Start chat')",
+    "button:has-text('Chat now')",
+    "button:has-text('Ask a question')",
+    "button:has-text('문의')",
+    "button:has-text('상담')",
+    "button:has-text('시작')",
+    "button:has-text('메시지')",
+    "[role='button']:has-text('문의')",
+    "[role='button']:has-text('상담')",
 ]
 
 SEND_BUTTON_CANDIDATES = [
@@ -111,6 +166,12 @@ BASELINE_MENU_TEXTS = [
     "FAQ",
 ]
 
+CAPTURE_INVALID_REASON = "Capture invalid: no verified submitted question and bot answer pair"
+CAPTURE_INVALID_FIX = "Check before_send/after_send screenshots, frame selection, and message diff logs"
+MIN_INPUT_WIDTH = 24
+MIN_INPUT_HEIGHT = 18
+UNAVAILABLE_AVAILABILITY_VALUES = {"unavailable", "offline", "hidden", "closed"}
+
 
 @dataclass(slots=True)
 class SubmissionEvidence:
@@ -119,11 +180,22 @@ class SubmissionEvidence:
     input_verified: bool
     input_method_used: str
     submit_method_used: str
+    input_scope: str
+    input_selector: str
+    input_candidate_score: float
+    top_candidate_disabled: bool
+    failover_attempts: int
+    final_input_value_verified: bool
+    user_message_echo_verified: bool
+    input_failure_category: str
+    input_failure_reason: str
+    editable_candidates_count: int
+    final_input_target_frame: str
+    input_candidates_debug: str
     before_send_chatbox_path: str
     before_send_fullpage_path: str
     after_send_chatbox_path: str
     after_send_fullpage_path: str
-    user_message_echo_verified: bool
     capture_reason: str
 
 
@@ -134,6 +206,17 @@ class AnswerWaitResult:
     new_bot_response_detected: bool
     baseline_menu_detected: bool
     reason: str
+
+
+@dataclass(slots=True)
+class _InputCandidate:
+    scope: Page | Frame
+    scope_name: str
+    locator: Locator
+    selector: str
+    index: int
+    score: int
+    metadata: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -167,6 +250,708 @@ def _iter_scopes(page: Page) -> list[tuple[str, Page | Frame]]:
         frame_name = frame.name or frame.url or f"frame-{index}"
         scopes.append((frame_name, frame))
     return scopes
+
+
+def _bool_attr(value: Any) -> bool:
+    return str(value or "").strip().lower() == "true"
+
+
+def _candidate_size_ok(candidate_state: dict[str, Any]) -> bool:
+    return int(candidate_state.get("bbox_width", 0) or 0) >= MIN_INPUT_WIDTH and int(candidate_state.get("bbox_height", 0) or 0) >= MIN_INPUT_HEIGHT
+
+
+def _candidate_reason(candidate_state: dict[str, Any]) -> str:
+    if not candidate_state.get("visible"):
+        return "not_visible"
+    if candidate_state.get("disabled") or not candidate_state.get("enabled"):
+        return "disabled"
+    if candidate_state.get("readonly") or candidate_state.get("aria_readonly"):
+        return "readonly"
+    if candidate_state.get("aria_disabled"):
+        return "aria_disabled"
+    if not _candidate_size_ok(candidate_state):
+        return "zero_size"
+
+    placeholder = str(candidate_state.get("placeholder", "")).lower()
+    aria_label = str(candidate_state.get("aria_label", "")).lower()
+    if "더이상 입력할 수 없습니다" in placeholder or "더이상 입력할 수 없습니다" in aria_label:
+        return "placeholder_shell"
+    if not candidate_state.get("editable"):
+        return "not_editable"
+    return "allowed"
+
+
+def _grade_candidate_state(candidate_state: dict[str, Any]) -> tuple[str, str]:
+    reason = _candidate_reason(candidate_state)
+    if reason != "allowed":
+        return "C", reason
+
+    contenteditable = str(candidate_state.get("contenteditable", "")).lower()
+    tag_name = str(candidate_state.get("tag_name", "")).lower()
+    role = str(candidate_state.get("role", "")).lower()
+    if candidate_state.get("visible") and candidate_state.get("enabled") and candidate_state.get("editable"):
+        if tag_name in {"textarea", "input"} and contenteditable not in {"false", "inherit"}:
+            return "A", "editable_dom"
+        if tag_name in {"textarea", "input"}:
+            return "A", "editable_dom"
+        if role == "textbox" or contenteditable in {"true", "plaintext-only"}:
+            return "B", "textbox_like"
+    return "C", "not_final_target"
+
+
+def _score_ranked_candidate(candidate_state: dict[str, Any], grade: str, preferred_scope: str, scope_name: str) -> float:
+    score = 95.0 if grade == "A" else 78.0 if grade == "B" else 15.0
+    if scope_name == preferred_scope:
+        score += 4.0
+    if candidate_state.get("placeholder"):
+        score += 1.0
+    if candidate_state.get("tag_name") == "textarea":
+        score += 2.0
+    if candidate_state.get("contenteditable") in {"true", "plaintext-only"}:
+        score += 2.0
+    if candidate_state.get("role") == "textbox":
+        score += 1.0
+    score += min(int(candidate_state.get("bbox_width", 0) or 0) / 100.0, 4.0)
+    return score
+
+
+def _candidate_debug_line(candidate: dict[str, Any]) -> str:
+    return (
+        f"score={candidate['score']:.1f} selector={candidate['selector']} scope={candidate['scope_name']} "
+        f"visible={candidate['visible']} editable={candidate['editable']} disabled={candidate['disabled']} "
+        f"grade={candidate['grade']} reason={candidate['reason']}"
+    )
+
+
+def _candidate_is_disabled_like(candidate: dict[str, Any] | None) -> bool:
+    if not candidate:
+        return False
+    if candidate.get("grade") in {"A", "B"}:
+        return False
+    if candidate.get("disabled") or candidate.get("readonly") or candidate.get("aria_disabled") or candidate.get("aria_readonly"):
+        return True
+    return str(candidate.get("reason", "")) in {
+        "disabled",
+        "readonly",
+        "aria_disabled",
+        "placeholder_shell",
+        "not_editable",
+    }
+
+
+def _locator_count(scope: Page | Frame, selector: str) -> int:
+    try:
+        return scope.locator(selector).count()
+    except Exception:
+        return 0
+
+
+def _inspect_candidate(locator: Locator) -> dict[str, Any]:
+    visible = False
+    enabled = False
+    editable = False
+    try:
+        visible = locator.is_visible(timeout=400)
+    except Exception:
+        visible = False
+    try:
+        enabled = locator.is_enabled(timeout=400)
+    except Exception:
+        enabled = False
+    try:
+        editable = locator.is_editable(timeout=400)
+    except Exception:
+        editable = False
+
+    payload = {
+        "visible": visible,
+        "enabled": enabled,
+        "editable": editable,
+        "readonly": False,
+        "aria_disabled": False,
+        "aria_readonly": False,
+        "disabled": not enabled,
+        "role": "",
+        "tag_name": "",
+        "input_type": "",
+        "contenteditable": "",
+        "placeholder": "",
+        "aria_label": "",
+        "bbox_width": 0,
+        "bbox_height": 0,
+    }
+    try:
+        payload.update(
+            locator.evaluate(
+                """
+                (el) => {
+                  const rect = el.getBoundingClientRect();
+                  return {
+                    readonly: !!el.readOnly,
+                    aria_disabled: (el.getAttribute('aria-disabled') || '').toLowerCase() === 'true',
+                    aria_readonly: (el.getAttribute('aria-readonly') || '').toLowerCase() === 'true',
+                    disabled: !!el.disabled,
+                    role: (el.getAttribute('role') || '').toLowerCase(),
+                    tag_name: (el.tagName || '').toLowerCase(),
+                    input_type: (el.getAttribute('type') || '').toLowerCase(),
+                    contenteditable: (el.getAttribute('contenteditable') || el.contentEditable || '').toLowerCase(),
+                    placeholder: (el.getAttribute('placeholder') || '').trim(),
+                    aria_label: (el.getAttribute('aria-label') || '').trim(),
+                    bbox_width: Math.round(rect.width || 0),
+                    bbox_height: Math.round(rect.height || 0),
+                  };
+                }
+                """
+            )
+        )
+    except Exception:
+        pass
+    payload["editable"] = bool(payload["editable"]) and not bool(payload["disabled"]) and not bool(payload["readonly"]) and not bool(payload["aria_disabled"]) and not bool(payload["aria_readonly"])
+    return payload
+
+
+def _input_candidate_snapshot(locator: Locator) -> dict[str, Any]:
+    try:
+        return locator.evaluate(
+            r"""
+            (el) => {
+              const normalize = (value) => (value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+              const tag = (el.tagName || '').toLowerCase();
+              const type = (el.getAttribute('type') || '').toLowerCase();
+              const role = (el.getAttribute('role') || '').toLowerCase();
+              const ariaLabel = normalize(el.getAttribute('aria-label') || '');
+              const placeholder = normalize(el.getAttribute('placeholder') || '');
+              const contentEditable = (el.getAttribute('contenteditable') || el.contentEditable || '').toLowerCase();
+              const disabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true';
+              const readOnly = !!el.readOnly || el.getAttribute('aria-readonly') === 'true';
+              const style = window.getComputedStyle(el);
+              const rect = el.getBoundingClientRect();
+              const visible = !!style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+              const centerX = Math.min(Math.max(rect.left + (rect.width / 2), 0), window.innerWidth - 1);
+              const centerY = Math.min(Math.max(rect.top + (rect.height / 2), 0), window.innerHeight - 1);
+              const topEl = visible ? document.elementFromPoint(centerX, centerY) : null;
+              const obscured = !!topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el);
+              const editable = !disabled && !readOnly && (
+                tag === 'textarea' ||
+                tag === 'input' ||
+                role === 'textbox' ||
+                (contentEditable && contentEditable !== 'false' && contentEditable !== 'inherit')
+              );
+              const footerLike = !!el.closest('footer, form, [class*="footer" i], [class*="input" i], [class*="composer" i], [class*="textarea" i]');
+              return {
+                tag,
+                type,
+                role,
+                ariaLabel,
+                placeholder,
+                contentEditable,
+                disabled,
+                readOnly,
+                visible,
+                obscured,
+                editable,
+                footerLike,
+                textPreview: normalize(el.innerText || el.textContent || ''),
+                className: typeof el.className === 'string' ? normalize(el.className) : '',
+                id: normalize(el.id || ''),
+                rectTop: Number.isFinite(rect.top) ? Math.round(rect.top) : 0,
+                rectLeft: Number.isFinite(rect.left) ? Math.round(rect.left) : 0,
+                rectWidth: Number.isFinite(rect.width) ? Math.round(rect.width) : 0,
+                rectHeight: Number.isFinite(rect.height) ? Math.round(rect.height) : 0,
+                viewportHeight: window.innerHeight || 0,
+              };
+            }
+            """
+        )
+    except Exception:
+        return {}
+
+
+def _score_input_candidate_metadata(metadata: dict[str, Any], preferred_scope: str, candidate_scope: str) -> int:
+    score = 0
+    tag = str(metadata.get("tag", ""))
+    role = str(metadata.get("role", ""))
+    candidate_type = str(metadata.get("type", ""))
+    placeholder = f"{metadata.get('placeholder', '')} {metadata.get('ariaLabel', '')}".lower()
+
+    if metadata.get("visible"):
+        score += 12
+    else:
+        score -= 10
+    if metadata.get("editable"):
+        score += 12
+    else:
+        score -= 6
+    if metadata.get("disabled"):
+        score -= 12
+    else:
+        score += 4
+    if metadata.get("obscured"):
+        score -= 8
+    else:
+        score += 5
+    if metadata.get("footerLike"):
+        score += 4
+    if candidate_scope == preferred_scope:
+        score += 6
+
+    if tag == "textarea":
+        score += 8
+    elif tag == "input" and candidate_type in {"text", "search", ""}:
+        score += 6
+    elif role == "textbox":
+        score += 6
+    elif metadata.get("contentEditable"):
+        score += 7
+
+    if any(keyword in placeholder for keyword in ["질문", "문의", "메시지", "채팅", "입력", "message", "chat", "ask"]):
+        score += 8
+
+    rect_top = int(metadata.get("rectTop", 0) or 0)
+    viewport_height = int(metadata.get("viewportHeight", 0) or 0)
+    if viewport_height > 0 and rect_top > int(viewport_height * 0.45):
+        score += 3
+
+    return score
+
+
+def _classify_input_candidate_metadata(metadata: dict[str, Any]) -> tuple[str, str]:
+    if not metadata:
+        return "input locator not found", "No input candidate metadata available"
+    if metadata.get("disabled"):
+        return "input locator found but disabled", "Input candidate exists but is disabled"
+    if not metadata.get("editable"):
+        return "input locator found but not editable", "Input candidate exists but is not editable"
+    if metadata.get("obscured"):
+        return "input locator found but obscured by overlay", "Input candidate exists but is obscured by another element"
+    return "", ""
+
+
+def _format_input_candidate_log(candidate: _InputCandidate) -> str:
+    metadata = candidate.metadata
+    return (
+        f"scope={candidate.scope_name} score={candidate.score} selector={candidate.selector} index={candidate.index} "
+        f"tag={metadata.get('tag', '')} type={metadata.get('type', '')} role={metadata.get('role', '')} "
+        f"visible={metadata.get('visible', False)} editable={metadata.get('editable', False)} "
+        f"disabled={metadata.get('disabled', False)} obscured={metadata.get('obscured', False)} "
+        f"placeholder={metadata.get('placeholder', '')!r} aria={metadata.get('ariaLabel', '')!r} "
+        f"footerLike={metadata.get('footerLike', False)} rect=({metadata.get('rectLeft', 0)},{metadata.get('rectTop', 0)},{metadata.get('rectWidth', 0)},{metadata.get('rectHeight', 0)})"
+    )
+
+
+def _collect_input_candidates(scope: Page | Frame, scope_name: str, preferred_scope_name: str) -> list[_InputCandidate]:
+    candidates: list[_InputCandidate] = []
+    seen: set[tuple[str, str, str, str, int, int]] = set()
+    for selector in INPUT_SCAN_SELECTORS:
+        try:
+            locator = scope.locator(selector)
+            count = locator.count()
+        except Exception:
+            continue
+        for index in range(count):
+            candidate_locator = locator.nth(index)
+            metadata = _input_candidate_snapshot(candidate_locator)
+            if not metadata:
+                continue
+            key = (
+                scope_name,
+                str(metadata.get("tag", "")),
+                str(metadata.get("placeholder", "")),
+                str(metadata.get("ariaLabel", "")),
+                int(metadata.get("rectTop", 0) or 0),
+                int(metadata.get("rectLeft", 0) or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(
+                _InputCandidate(
+                    scope=scope,
+                    scope_name=scope_name,
+                    locator=candidate_locator,
+                    selector=selector,
+                    index=index,
+                    score=_score_input_candidate_metadata(metadata, preferred_scope_name, scope_name),
+                    metadata=metadata,
+                )
+            )
+    return candidates
+
+
+def _resolve_best_input_candidate(page: Page, preferred_scope_name: str) -> tuple[_InputCandidate | None, list[str], str, str]:
+    runtime = _runtime()
+    all_candidates: list[_InputCandidate] = []
+    for scope_name, scope in _iter_scopes(page):
+        all_candidates.extend(_collect_input_candidates(scope, scope_name, preferred_scope_name))
+
+    ordered = sorted(all_candidates, key=lambda item: item.score, reverse=True)
+    candidate_logs = [_format_input_candidate_log(candidate) for candidate in ordered]
+    if candidate_logs:
+        runtime.logger.info("[INPUT] opened HTML candidate count: %s", len(candidate_logs))
+        for entry in candidate_logs:
+            runtime.logger.info("[INPUT] opened HTML candidate %s", entry)
+    else:
+        runtime.logger.warning("[INPUT] opened HTML candidate count: 0")
+
+    if not ordered:
+        return None, candidate_logs, "input locator not found", "No textarea/input/contenteditable candidate found across page and iframes"
+
+    best = ordered[0]
+    category, reason = _classify_input_candidate_metadata(best.metadata)
+    return best, candidate_logs, category, reason
+
+
+def get_sprinklr_sdk_status(page: Page) -> dict[str, bool]:
+    status = {"has_sprchat": False, "trigger_exists": False}
+    try:
+        status = page.evaluate(
+            """
+            () => ({
+              has_sprchat: typeof window.sprChat === 'function',
+              trigger_exists: !!document.querySelector('#spr-chat__trigger-button'),
+            })
+            """
+        )
+    except Exception:
+        pass
+    _runtime().logger.info(
+        "[SPR][SDK_STATUS] has_sprchat=%s trigger_exists=%s",
+        status.get("has_sprchat", False),
+        status.get("trigger_exists", False),
+    )
+    return status
+
+
+def bind_availability_probe(page: Page) -> None:
+    runtime = _runtime()
+    try:
+        subscribed = page.evaluate(
+            """
+            () => {
+              window.__rubicon_chat_probe = window.__rubicon_chat_probe || { availability: 'unknown' };
+              if (typeof window.sprChat !== 'function') {
+                return false;
+              }
+              try {
+                window.sprChat('onAvailabilityChange', (value) => {
+                  const nextValue = typeof value === 'string' ? value : (value?.availability || value?.status || 'unknown');
+                  window.__rubicon_chat_probe.availability = String(nextValue || 'unknown');
+                });
+                return true;
+              } catch (error) {
+                return false;
+              }
+            }
+            """
+        )
+        if subscribed:
+            runtime.logger.info("[SPR][AVAILABILITY][SUBSCRIBED]")
+    except Exception:
+        pass
+
+
+def get_availability_probe(page: Page) -> str:
+    value = "unknown"
+    try:
+        value = str(
+            page.evaluate(
+                "() => (window.__rubicon_chat_probe && window.__rubicon_chat_probe.availability) || 'unknown'"
+            )
+        )
+    except Exception:
+        value = "unknown"
+    _runtime().logger.info("[SPR][AVAILABILITY][STATE] value=%s", value)
+    if value.lower() in UNAVAILABLE_AVAILABILITY_VALUES:
+        _runtime().logger.warning("[SPR][AVAILABILITY][UNAVAILABLE_HINT]")
+    return value
+
+
+def _chat_surface_present(page: Page) -> bool:
+    for _, scope in _iter_scopes(page):
+        try:
+            if _locator_count(scope, "textarea, [role='textbox'], [contenteditable='true'], .ql-editor") > 0:
+                return True
+            if _locator_count(scope, "[role='dialog'], [class*='chat' i], [class*='composer' i]") > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _click_selector_candidates(scope: Page | Frame, selectors: list[str]) -> bool:
+    for selector in selectors:
+        try:
+            locator = scope.locator(selector).first
+            if locator.count() <= 0:
+                continue
+            locator.click(timeout=2000)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def open_chat_widget_or_conversation(page: Page) -> dict[str, Any]:
+    runtime = _runtime()
+    result = {"open_method": "failed", "open_ok": False, "open_error": ""}
+    sdk_status = get_sprinklr_sdk_status(page)
+    methods: list[tuple[str, Any]] = []
+    if not runtime.config.rubicon_disable_sdk and sdk_status.get("has_sprchat"):
+        methods.extend([
+            ("sdk_open_new", lambda: page.evaluate("() => window.sprChat('openNewConversation')")),
+            ("sdk_open", lambda: page.evaluate("() => window.sprChat('open')")),
+        ])
+    if sdk_status.get("trigger_exists"):
+        methods.append(("trigger_button", lambda: page.locator("#spr-chat__trigger-button").first.click(timeout=2000)))
+    methods.append(("generic_trigger", lambda: _click_selector_candidates(page, _SPR_CHAT_TRIGGER_CANDIDATES)))
+
+    for method_name, action in methods:
+        runtime.logger.info("[SPR][OPEN][TRY] method=%s", method_name)
+        try:
+            action()
+            page.wait_for_timeout(800)
+            if _chat_surface_present(page):
+                runtime.logger.info("[SPR][OPEN][OK] method=%s", method_name)
+                result.update({"open_method": method_name, "open_ok": True, "open_error": ""})
+                return result
+            runtime.logger.info("[SPR][OPEN][FALLBACK] method=%s", method_name)
+        except Exception as exc:
+            runtime.logger.warning("[SPR][OPEN][FALLBACK] method=%s", method_name)
+            result["open_error"] = str(exc)
+
+    runtime.logger.info("[SPR][OPEN][TRY] method=legacy_chat_icon")
+    try:
+        open_rubicon_widget(page)
+        page.wait_for_timeout(800)
+        result.update({"open_method": "legacy_chat_icon", "open_ok": _chat_surface_present(page), "open_error": ""})
+        if result["open_ok"]:
+            runtime.logger.info("[SPR][OPEN][OK] method=legacy_chat_icon")
+            return result
+    except Exception as exc:
+        result["open_error"] = str(exc)
+
+    runtime.logger.error("[SPR][OPEN][FAIL] error=%s", result.get("open_error", ""))
+    return result
+
+
+def scan_frame_inventory(page: Page) -> list[dict[str, Any]]:
+    inventory: list[dict[str, Any]] = []
+    scopes = [(0, "page", page)]
+    scopes.extend((index + 1, frame.name or frame.url or f"frame-{index}", frame) for index, frame in enumerate(page.frames))
+    for frame_index, label, scope in scopes:
+        ranked_candidates: list[dict[str, Any]] = []
+        for selector in INPUT_SCAN_SELECTORS:
+            try:
+                locator = scope.locator(selector)
+                for index in range(locator.count()):
+                    ranked_candidates.append(_inspect_candidate(locator.nth(index)))
+            except Exception:
+                continue
+        item = {
+            "frame_index": frame_index,
+            "frame_label": label,
+            "url": getattr(scope, "url", "") if isinstance(scope, Frame) else page.url,
+            "textarea_count": _locator_count(scope, "textarea"),
+            "contenteditable_count": _locator_count(scope, "[contenteditable='true'], [contenteditable='plaintext-only'], div[contenteditable]"),
+            "role_textbox_count": _locator_count(scope, "[role='textbox']"),
+            "visible_candidate_count": sum(1 for candidate in ranked_candidates if candidate.get("visible")),
+            "editable_candidate_count": sum(1 for candidate in ranked_candidates if _grade_candidate_state(candidate)[0] in {"A", "B"}),
+            "disabled_candidate_count": sum(1 for candidate in ranked_candidates if candidate.get("disabled") or candidate.get("readonly") or candidate.get("aria_disabled") or candidate.get("aria_readonly")),
+        }
+        inventory.append(item)
+        _runtime().logger.info(
+            "[INPUT_V2][FRAME_INVENTORY] frame=%s url=%s textarea=%s contenteditable=%s role_textbox=%s editable=%s disabled=%s",
+            item["frame_index"],
+            item["url"],
+            item["textarea_count"],
+            item["contenteditable_count"],
+            item["role_textbox_count"],
+            item["editable_candidate_count"],
+            item["disabled_candidate_count"],
+        )
+    return inventory
+
+
+def _resolve_candidate_scope(ctx: ResolvedChatContext) -> list[tuple[str, Page | Frame]]:
+    if ctx.page is None:
+        return [(ctx.scope_name, ctx.scope)]
+    return _iter_scopes(ctx.page)
+
+
+def _update_context_from_ranked_candidates(ctx: ResolvedChatContext, ranked_candidates: list[dict[str, Any]]) -> None:
+    ctx.ranked_input_candidates = ranked_candidates
+    ctx.input_candidate_logs = [_candidate_debug_line(candidate) for candidate in ranked_candidates]
+    ctx.input_candidates_debug = "\n".join(ctx.input_candidate_logs)
+    preferred = next((candidate for candidate in ranked_candidates if candidate["grade"] in {"A", "B"}), None)
+    if preferred is None and ranked_candidates:
+        preferred = ranked_candidates[0]
+    if preferred is None:
+        ctx.input_locator = None
+        ctx.input_scope = None
+        ctx.input_scope_name = ""
+        ctx.input_selector = ""
+        ctx.input_candidate_score = 0.0
+        return
+
+    ctx.input_locator = preferred["locator"]
+    ctx.input_scope = preferred["scope"]
+    ctx.input_scope_name = preferred["scope_name"]
+    ctx.input_selector = preferred["selector"]
+    ctx.input_candidate_score = preferred["score"]
+    ctx.input_failure_category = preferred.get("failure_category", "")
+    ctx.input_failure_reason = preferred.get("failure_reason", "")
+    send_locator, _ = first_visible_locator(preferred["scope"], SEND_BUTTON_CANDIDATES, timeout_ms=700)
+    if send_locator is None:
+        send_locator, _ = first_visible_locator(ctx.scope, SEND_BUTTON_CANDIDATES, timeout_ms=700)
+    ctx.send_locator = send_locator
+
+
+def collect_ranked_input_candidates(ctx: ResolvedChatContext, frame_label: str = "") -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    preferred_scope = frame_label or ctx.scope_name or ctx.input_scope_name
+    seen: set[tuple[str, str, str, str, int, int]] = set()
+    for scope_name, scope in _resolve_candidate_scope(ctx):
+        if frame_label and scope_name != frame_label:
+            continue
+        for selector in INPUT_SCAN_SELECTORS:
+            try:
+                locator = scope.locator(selector)
+                count = locator.count()
+            except Exception:
+                continue
+            for index in range(count):
+                current = locator.nth(index)
+                state = _inspect_candidate(current)
+                key = (
+                    scope_name,
+                    selector,
+                    state.get("tag_name", ""),
+                    state.get("placeholder", ""),
+                    int(state.get("bbox_width", 0) or 0),
+                    int(state.get("bbox_height", 0) or 0),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                grade, reason = _grade_candidate_state(state)
+                score = _score_ranked_candidate(state, grade, preferred_scope, scope_name)
+                candidate = {
+                    "locator": current,
+                    "scope": scope,
+                    "scope_name": scope_name,
+                    "selector": selector,
+                    "score": score,
+                    "grade": grade,
+                    "reason": reason,
+                    "visible": state.get("visible", False),
+                    "enabled": state.get("enabled", False),
+                    "editable": state.get("editable", False),
+                    "disabled": state.get("disabled", False),
+                    "readonly": state.get("readonly", False),
+                    "aria_disabled": state.get("aria_disabled", False),
+                    "aria_readonly": state.get("aria_readonly", False),
+                    "placeholder": state.get("placeholder", ""),
+                    "aria_label": state.get("aria_label", ""),
+                    "bbox_width": state.get("bbox_width", 0),
+                    "bbox_height": state.get("bbox_height", 0),
+                    "contenteditable": state.get("contenteditable", ""),
+                    "role": state.get("role", ""),
+                    "tag_name": state.get("tag_name", ""),
+                    "failure_category": "" if grade in {"A", "B"} else ("top_candidate_disabled" if reason in {"disabled", "readonly", "aria_disabled", "placeholder_shell"} else "no_editable_candidate_after_rescan"),
+                    "failure_reason": reason,
+                }
+                if grade == "C":
+                    _runtime().logger.info("[INPUT_V2][CANDIDATE_FILTER] selector=%s rejected_reason=%s", selector, reason)
+                ranked.append(candidate)
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    _update_context_from_ranked_candidates(ctx, ranked)
+    top_summary = _candidate_debug_line(ranked[0]) if ranked else "none"
+    _runtime().logger.info("[INPUT_V2][RANKED_CANDIDATES] count=%s top=%s", len(ranked), top_summary)
+    return ranked
+
+
+def _activation_click(locator: Locator, target: str) -> bool:
+    try:
+        locator.click(timeout=2000)
+        _runtime().logger.info("[SPR][ACTIVATION][CLICK] target=%s", target)
+        return True
+    except Exception:
+        return False
+
+
+def _activation_targets(page: Page, ctx: ResolvedChatContext) -> list[tuple[str, Locator]]:
+    targets: list[tuple[str, Locator]] = []
+    if ctx.container_locator is not None:
+        targets.append(("chat_container", ctx.container_locator))
+    try:
+        targets.append(("footer", ctx.scope.locator("footer, form, [class*='footer' i], [class*='composer' i]").first))
+    except Exception:
+        pass
+    if ctx.input_locator is not None:
+        try:
+            targets.append(("input_wrapper", ctx.input_locator.locator("xpath=ancestor::*[contains(@class, 'input') or contains(@class, 'composer')][1]").first))
+        except Exception:
+            pass
+        try:
+            targets.append(("textarea_parent", ctx.input_locator.locator("xpath=parent::*").first))
+        except Exception:
+            pass
+    try:
+        targets.append(("placeholder_area", ctx.scope.locator("[placeholder], [aria-label]").first))
+    except Exception:
+        pass
+    for selector in _ACTIVATION_CANDIDATES:
+        try:
+            targets.append((selector, page.locator(selector).first))
+        except Exception:
+            continue
+    return targets
+
+
+def ensure_composer_ready(page: Page, ctx: ResolvedChatContext) -> dict[str, Any]:
+    runtime = _runtime()
+    runtime.logger.info("[SPR][ACTIVATION][START]")
+    steps: list[str] = []
+    latest_candidates: list[dict[str, Any]] = []
+    editable_count = 0
+    max_rounds = max(1, runtime.config.rubicon_frame_rescan_rounds)
+
+    for round_index in range(max_rounds):
+        latest_candidates = collect_ranked_input_candidates(ctx)
+        editable_count = sum(1 for candidate in latest_candidates if candidate["grade"] in {"A", "B"})
+        runtime.logger.info("[SPR][ACTIVATION][STATE] editable_candidates=%s", editable_count)
+        if editable_count > 0:
+            runtime.logger.info("[SPR][ACTIVATION][SUCCESS]")
+            return {
+                "activation_attempted": bool(steps),
+                "activation_steps": steps,
+                "activation_success": True,
+                "editable_candidates_after_activation": editable_count,
+            }
+        for target_name, locator in _activation_targets(page, ctx):
+            step_name = f"round{round_index + 1}:{target_name}"
+            steps.append(step_name)
+            _activation_click(locator, step_name)
+            page.wait_for_timeout(500)
+            latest_candidates = collect_ranked_input_candidates(ctx)
+            editable_count = sum(1 for candidate in latest_candidates if candidate["grade"] in {"A", "B"})
+            runtime.logger.info("[SPR][ACTIVATION][STATE] editable_candidates=%s", editable_count)
+            if editable_count > 0:
+                runtime.logger.info("[SPR][ACTIVATION][SUCCESS]")
+                return {
+                    "activation_attempted": True,
+                    "activation_steps": steps,
+                    "activation_success": True,
+                    "editable_candidates_after_activation": editable_count,
+                }
+        page.wait_for_timeout(300)
+    runtime.logger.info("[SPR][ACTIVATION][EXHAUSTED]")
+    return {
+        "activation_attempted": bool(steps),
+        "activation_steps": steps,
+        "activation_success": False,
+        "editable_candidates_after_activation": editable_count,
+    }
 
 
 def _maybe_visible(scope: Page | Frame, candidate: dict[str, Any]) -> Locator | None:
@@ -317,29 +1102,140 @@ def open_rubicon_widget(page: Page) -> None:
     raise RuntimeError("Rubicon chatbot icon not found")
 
 
-def resolve_chat_context(page: Page) -> ResolvedChatContext:
-    """Resolve the active chat context from the page DOM or nested iframes."""
+def find_sprinklr_frames(page: Page) -> list[Frame]:
+    """Return candidate Sprinklr frames, preferring live-chat over proactive frames."""
+
+    frames: list[Frame] = []
+    for frame in page.frames:
+        frame_hint = f"{frame.name or ''} {frame.url or ''}".lower()
+        if "spr" in frame_hint or "chat" in frame_hint or "live" in frame_hint or "assistant" in frame_hint:
+            frames.append(frame)
+    if frames:
+        return frames
+    return list(page.frames)
+
+
+def score_frame_as_chat_candidate(scope: Page | Frame) -> int:
+    """Score a page/frame by how much it looks like the active Sprinklr chat surface."""
+
+    score = 0
+    scope_hint = ""
+    if isinstance(scope, Frame):
+        scope_hint = f"{scope.name or ''} {scope.url or ''}".lower()
+
+    input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=500)
+    send_locator, _ = first_visible_locator(scope, SEND_BUTTON_CANDIDATES, timeout_ms=400)
+    container_locator, container_candidate = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=400)
+
+    if input_locator is not None:
+        score += 8
+    if send_locator is not None:
+        score += 4
+    if container_locator is not None:
+        score += 4
+    if container_candidate and container_candidate.get("value"):
+        score += 1
+
+    live_regions = scope.locator("[role='log'], [role='list'], [role='article'], [aria-live]")
+    try:
+        if live_regions.count() > 0:
+            score += 5
+    except Exception:
+        pass
+
+    bubble_locator = scope.locator("[data-message-author], [data-author], [class*='message' i], [class*='bubble' i]")
+    try:
+        bubble_count = bubble_locator.count()
+        if bubble_count > 0:
+            score += min(bubble_count, 6)
+    except Exception:
+        pass
+
+    try:
+        visible_text = scope.evaluate(
+            "() => { const el = document.body || document.documentElement; return el ? (el.innerText || el.textContent || '') : ''; }"
+        )
+        visible_norm = normalize_text_for_diff(visible_text)
+        if any(keyword in visible_norm.lower() for keyword in ["상담", "메시지", "assistant", "chat", "문의"]):
+            score += 3
+    except Exception:
+        pass
+
+    if "live-chat" in scope_hint or "spr-live-chat-frame" in scope_hint:
+        score += 7
+    if "session-storage" in scope_hint:
+        score -= 4
+    if "trigger" in scope_hint:
+        score -= 2
+    if "proactive" in scope_hint:
+        score -= 8
+
+    return score
+
+
+def resolve_sprinklr_chat_context(page: Page) -> ResolvedChatContext:
+    """Resolve the best Sprinklr chat context using frame scoring and visible chat signals."""
 
     runtime = _runtime()
-    for scope_name, scope in _iter_scopes(page):
-        input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=1800)
-        if input_locator is None:
+    candidate_scopes: list[tuple[str, Page | Frame]] = [("page", page)]
+    candidate_scopes.extend((frame.name or frame.url or f"frame-{index}", frame) for index, frame in enumerate(find_sprinklr_frames(page)))
+
+    runtime.logger.info("[CONTEXT] frame count: %s", len(page.frames))
+
+    scored: list[tuple[int, str, Page | Frame]] = []
+    for scope_name, scope in candidate_scopes:
+        score = score_frame_as_chat_candidate(scope)
+        runtime.logger.info("[CONTEXT] candidate scope=%s score=%s", scope_name, score)
+        if score <= 0:
             continue
-        send_locator, _ = first_visible_locator(scope, SEND_BUTTON_CANDIDATES, timeout_ms=900)
-        container_locator, _ = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=900)
+        scored.append((score, scope_name, scope))
+
+    for score, scope_name, scope in sorted(scored, key=lambda item: item[0], reverse=True):
+        container_locator, container_candidate = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=900)
         context = ResolvedChatContext(
             scope=scope,
             scope_name=scope_name,
-            input_locator=input_locator,
-            send_locator=send_locator,
+            input_locator=None,
+            send_locator=None,
             container_locator=container_locator,
             bot_message_candidates=BOT_MESSAGE_CANDIDATES,
             history_candidates=HISTORY_CANDIDATES,
             loading_candidates=LOADING_CANDIDATES,
+            page=page,
+            chat_frame_score=score,
         )
-        runtime.logger.info("chat context resolved")
+        context.frame_inventory = scan_frame_inventory(page)
+        ranked_candidates = collect_ranked_input_candidates(context, scope_name)
+        editable_candidates = [candidate for candidate in ranked_candidates if candidate["grade"] in {"A", "B"}]
+        top_candidate = ranked_candidates[0] if ranked_candidates else None
+        context.input_failure_category = ""
+        context.input_failure_reason = ""
+        if not editable_candidates:
+            if _candidate_is_disabled_like(top_candidate):
+                context.input_failure_category = "top_candidate_disabled"
+                context.input_failure_reason = top_candidate.get("reason", "disabled")
+            else:
+                context.input_failure_category = "no_editable_candidate_after_rescan"
+                context.input_failure_reason = "No editable candidate found in ranked rescan"
+        runtime.logger.info("[CONTEXT] selected chat frame: %s", scope_name)
+        runtime.logger.info("[CONTEXT] chat container selector matched: %s", container_candidate)
+        runtime.logger.info("[INPUT] selected input scope: %s", context.input_scope_name or "(none)")
+        runtime.logger.info("[INPUT] selected input selector: %s", context.input_selector or "(none)")
+        runtime.logger.info("[INPUT] selected input score: %s", context.input_candidate_score)
+        if context.input_failure_category:
+            runtime.logger.warning("[INPUT] %s", context.input_failure_category)
+            runtime.logger.warning("[INPUT] %s", context.input_failure_reason)
         return context
+
     raise RuntimeError("Chat iframe/input context could not be resolved")
+
+
+def resolve_chat_context(page: Page) -> ResolvedChatContext:
+    """Resolve the active chat context from the page DOM or nested iframes."""
+
+    context = resolve_sprinklr_chat_context(page)
+    _runtime().logger.info("chat context resolved")
+    return context
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +1328,59 @@ def _read_input_value(locator: Locator, input_type: str) -> str:
         return ""
 
 
+def _input_is_editable(locator: Locator) -> bool:
+    try:
+        return bool(
+            locator.evaluate(
+                """
+                (el) => {
+                  const disabled = !!el.disabled;
+                  const readOnly = !!el.readOnly;
+                  const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                  const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
+                  if (disabled || readOnly) return false;
+                  if (aria.includes('더이상 입력할 수 없습니다') || placeholder.includes('더이상 입력할 수 없습니다')) {
+                    return false;
+                  }
+                  return true;
+                }
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
+def _capture_opened_footer(
+    case_id: str,
+    timestamp: str,
+    config: AppConfig,
+    logger: Any,
+    context: ResolvedChatContext,
+) -> str:
+    if context.input_locator is None:
+        return ""
+
+    safe_id = sanitize_filename(case_id)
+    footer_path = config.chatbox_dir / f"{timestamp}_{safe_id}_opened_footer.png"
+    footer_locator = context.input_locator
+    try:
+        footer_locator = context.input_locator.locator(
+            "xpath=ancestor-or-self::*[self::footer or self::form or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'footer') or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'input') or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'composer')][1]"
+        ).first
+        footer_locator.wait_for(state="visible", timeout=1200)
+    except Exception:
+        footer_locator = context.input_locator
+
+    try:
+        footer_locator.screenshot(path=str(footer_path))
+        logger.info("[ARTIFACT] opened_footer screenshot saved: %s", footer_path)
+        return str(footer_path)
+    except Exception as exc:
+        logger.warning("opened_footer screenshot failed: %s", exc)
+        return ""
+
+
 def verify_input_dom_state(locator: Locator, question: str) -> bool:
     """Verify that the DOM input element reflects the question text."""
 
@@ -459,6 +1408,10 @@ def is_initial_menu_text(text: str) -> bool:
 
 def _normalize_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def _normalize_answer_text(value: str) -> str:
+    return "\n".join(line.strip() for line in value.splitlines() if line.strip())
 
 
 def _contains_baseline_menu(text: str) -> bool:
@@ -504,74 +1457,48 @@ def _is_new_response_candidate(text: str, baseline_messages: list[str]) -> bool:
     return True
 
 
-def verify_user_message_echo(context: ResolvedChatContext, question: str, logger: Any) -> bool:
-    """Return True if the submitted question appears as a user message bubble.
-
-    After the question is sent, the chat should echo it back as a user-side
-    message element.  This check tries specific user-message selectors first,
-    then falls back to searching all chat history nodes for the question text,
-    and finally does a full JavaScript text-scan of the entire scope so that
-    Sprinklr-specific class names or shadow DOM structures are not a blocker.
-    The check is best-effort: a ``False`` result is logged but does not by
-    itself fail the case (it contributes to the overall verification signal).
-    """
-
+def verify_user_echo(context: ResolvedChatContext, question: str) -> bool:
+    logger = _runtime().logger
     scope = context.scope
     question_norm = " ".join(question.strip().split())
 
-    # 1. Try dedicated user-message CSS selectors
     for candidate in USER_MESSAGE_CANDIDATES:
         try:
             locator = build_locator(scope, candidate)
-            if locator is None:
-                continue
-            count = locator.count()
-            for i in range(count):
-                try:
-                    text = locator.nth(i).inner_text(timeout=1000).strip()
-                    if question_norm in " ".join(text.split()):
-                        logger.info("[ECHO] user message echo confirmed via user-message selector")
-                        return True
-                except Exception:
-                    continue
+            for index in range(locator.count()):
+                text = " ".join((locator.nth(index).inner_text(timeout=1000) or "").split())
+                if question_norm and question_norm in text:
+                    logger.info("[INPUT_V2][ECHO][FOUND]")
+                    return True
         except Exception:
             continue
 
-    # 2. Fallback: scan structured history candidates for the question text
     for text in extract_message_history_candidates(context):
-        if question_norm in " ".join(text.split()):
-            logger.info("[ECHO] user message echo confirmed via history scan")
-            logger.info("[SUBMIT] user echo detected: True")
+        if question_norm and question_norm in " ".join(text.split()):
+            logger.info("[INPUT_V2][ECHO][FOUND]")
             return True
 
-    # 3. Last resort: JavaScript full-text scan of the entire scope.
-    #    This catches Sprinklr widget structures that use opaque class names or
-    #    shadow DOM — the text of every visible element is searched for the
-    #    question string without requiring specific CSS selectors.
     visible_text = extract_visible_chat_text(context)
     if visible_text and question_norm in " ".join(str(visible_text).split()):
-        logger.info("[ECHO] user message echo confirmed via visible chat text scan")
-        logger.info("[SUBMIT] user echo detected: True")
+        logger.info("[INPUT_V2][ECHO][FOUND]")
         return True
 
     try:
-        js = (
-            "() => {"
-            "  const el = document.body || document.documentElement;"
-            "  return el ? (el.innerText || el.textContent || '') : '';"
-            "}"
+        full_text = scope.evaluate(
+            "() => { const el = document.body || document.documentElement; return el ? (el.innerText || el.textContent || '') : ''; }"
         )
-        full_text = scope.evaluate(js)
         if full_text and question_norm in " ".join(str(full_text).split()):
-            logger.info("[ECHO] user message echo confirmed via JS full-scope text scan")
-            logger.info("[SUBMIT] user echo detected: True")
+            logger.info("[INPUT_V2][ECHO][FOUND]")
             return True
-    except Exception as exc:
-        logger.debug("[ECHO] JS text scan failed: %s", exc)
+    except Exception:
+        pass
 
-    logger.warning("[ECHO] user message echo not found in chat DOM (best-effort)")
-    logger.info("[SUBMIT] user echo detected: False")
+    logger.info("[INPUT_V2][ECHO][NOT_FOUND]")
     return False
+
+
+def verify_user_message_echo(context: ResolvedChatContext, question: str, logger: Any) -> bool:
+    return verify_user_echo(context, question)
 
 
 def find_chat_container(page: Page) -> Locator | None:
@@ -654,6 +1581,9 @@ def _try_keyboard_type(
 def _try_js_fallback(locator: Locator, question: str, input_type: str, logger: Any) -> bool:
     logger.warning("[INPUT] JS fallback used")
     try:
+        if not _input_is_editable(locator):
+            logger.warning("[INPUT] JS fallback blocked because input is not editable")
+            return False
         if input_type in ("input", "textarea"):
             locator.evaluate(
                 "(el, v) => { el.value = v;"
@@ -687,13 +1617,18 @@ def enter_question_with_verification(
     """Try multiple strategies to type *question* and verify it was accepted.
 
     Returns ``(input_verified, method_used)`` where *method_used* is one of
-    ``"fill"``, ``"press_sequentially"``, ``"keyboard"``, ``"js"`` or ``""``
-    when all strategies fail.
+    ``"fill"``, ``"press_sequentially"``, ``"keyboard.type"`` or ``""`` when all
+    strategies fail.
     """
 
     input_type = _detect_input_type(input_locator)
     logger.info("[INPUT] locator found via resolved context")
+    logger.info("[INPUT] input scope: %s", getattr(_runtime(), "current_case_id", ""))
     logger.info("[INPUT] detected type: %s", input_type)
+
+    if not _input_is_editable(input_locator):
+        logger.warning("[INPUT] input is not editable; aborting entry attempts")
+        return False, ""
 
     _focus_input(input_locator, logger)
     _clear_input(input_locator, input_type)
@@ -711,12 +1646,7 @@ def enter_question_with_verification(
     _focus_input(input_locator, logger)
 
     if _try_keyboard_type(scope, input_locator, question, input_type, logger):
-        return True, "keyboard"
-
-    _clear_input(input_locator, input_type)
-
-    if _try_js_fallback(input_locator, question, input_type, logger):
-        return True, "js"
+        return True, "keyboard.type"
 
     logger.error("[INPUT] all strategies failed for question: %.60s", question)
     return False, ""
@@ -726,14 +1656,22 @@ def capture_baseline_state(context: ResolvedChatContext) -> dict[str, Any]:
     """Capture the pre-submit bot-message baseline used for strict answer detection."""
 
     capture_baseline_bot_snapshot(context)
-    context.baseline_history = extract_message_history_candidates(context)
+    structured_history = extract_structured_message_history(context)
+    context.baseline_history = structured_history.get("history", [])
     context.baseline_visible_text = extract_visible_chat_text(context)
+    context.baseline_visible_blocks = extract_visible_text_blocks(context)
+    context.baseline_message_nodes_snapshot = extract_message_history_candidates(context)
     context.baseline_send_button_enabled = _is_send_button_enabled(context.send_locator)
+    _runtime().logger.info("[ANSWER] baseline visible text length: %s", len(context.baseline_visible_text))
+    _runtime().logger.info("[HISTORY] visible text block count: %s", len(context.baseline_visible_blocks))
+    _runtime().logger.info("[HISTORY] structured message history count: %s", len(context.baseline_history))
+    _runtime().logger.info("[ANSWER] baseline message nodes snapshot count: %s", len(context.baseline_message_nodes_snapshot))
     return {
         "baseline_bot_count": context.baseline_bot_count,
         "baseline_bot_messages": list(context.baseline_bot_messages),
         "baseline_history": list(context.baseline_history),
         "baseline_visible_text": context.baseline_visible_text,
+        "baseline_message_nodes_snapshot": list(context.baseline_message_nodes_snapshot),
         "baseline_send_button_enabled": context.baseline_send_button_enabled,
     }
 
@@ -791,20 +1729,143 @@ def _capture_stage(
         logger.warning("stage %s chatbox screenshot failed: %s", stage, exc)
 
     if cb_str:
-        logger.info("[ARTIFACT] %s screenshot saved: %s", stage, cb_str)
+        logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, cb_str)
     if fp_str:
-        logger.info("[ARTIFACT] %s fullpage saved: %s", stage, fp_str)
+        logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, fp_str)
 
     return fp_str, cb_str
 
 
-def verify_submit_effect(context: ResolvedChatContext, question: str, input_locator: Locator) -> bool:
+def capture_named_artifact(
+    page: Page,
+    context: ResolvedChatContext | None,
+    case_id: str,
+    stage: str,
+    config: AppConfig,
+) -> tuple[str, str]:
+    runtime = _runtime()
+    enabled = True
+    if stage == "opened_footer":
+        enabled = config.rubicon_opened_footer_screenshot
+    elif stage == "before_send":
+        enabled = config.rubicon_before_send_screenshot
+    elif stage == "after_answer":
+        enabled = config.rubicon_after_answer_screenshot
+    if not enabled:
+        return "", ""
+
+    if stage == "opened_footer" and context is not None and context.input_locator is not None:
+        safe_id = sanitize_filename(case_id)
+        chatbox_path = config.chatbox_dir / f"{runtime.current_case_timestamp}_{safe_id}_{stage}.png"
+        fullpage_path = config.fullpage_dir / f"{runtime.current_case_timestamp}_{safe_id}_{stage}.png"
+        target = context.input_locator
+        try:
+            target = context.input_locator.locator(
+                "xpath=ancestor-or-self::*[self::footer or self::form or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'footer') or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'composer') or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'input')][1]"
+            ).first
+        except Exception:
+            target = context.input_locator
+        fp_str = ""
+        cb_str = ""
+        try:
+            page.screenshot(path=str(fullpage_path), full_page=True)
+            fp_str = str(fullpage_path)
+            runtime.logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, fp_str)
+        except Exception:
+            pass
+        try:
+            target.screenshot(path=str(chatbox_path))
+            cb_str = str(chatbox_path)
+            runtime.logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, cb_str)
+        except Exception:
+            pass
+        return fp_str, cb_str
+
+    return _capture_stage(page, context, case_id, runtime.current_case_timestamp, stage, config, runtime.logger)
+
+
+def _capture_answer_screenshots(
+    page: Page,
+    context: ResolvedChatContext,
+    case_id: str,
+    timestamp: str,
+    config: AppConfig,
+    logger: Any,
+) -> tuple[list[str], str, str, bool]:
+    chat_paths: list[str] = []
+    multi_page = False
+    last_fullpage_path = ""
+    last_chatbox_path = ""
+
+    scroll_metrics = {"scrollHeight": 0, "clientHeight": 0, "scrollTop": 0}
+    if context.container_locator is not None:
+        try:
+            scroll_metrics = context.container_locator.evaluate(
+                "el => ({scrollHeight: el.scrollHeight || 0, clientHeight: el.clientHeight || 0, scrollTop: el.scrollTop || 0})"
+            )
+        except Exception:
+            scroll_metrics = {"scrollHeight": 0, "clientHeight": 0, "scrollTop": 0}
+
+    scroll_height = int(scroll_metrics.get("scrollHeight", 0) or 0)
+    client_height = int(scroll_metrics.get("clientHeight", 0) or 0)
+    max_parts = 4
+    if client_height > 0 and scroll_height > client_height + 32:
+        multi_page = True
+        for part_index in range(max_parts):
+            stage = f"after_answer_part_{part_index + 1:02d}"
+            fullpage_path, chatbox_path = _capture_stage(page, context, case_id, timestamp, stage, config, logger)
+            if chatbox_path:
+                chat_paths.append(chatbox_path)
+            if fullpage_path:
+                last_fullpage_path = fullpage_path
+            if chatbox_path:
+                last_chatbox_path = chatbox_path
+            try:
+                if context.container_locator is not None:
+                    state = context.container_locator.evaluate(
+                        "(el, height) => {"
+                        "  const nextTop = Math.min(el.scrollTop + height, Math.max(el.scrollHeight - el.clientHeight, 0));"
+                        "  el.scrollTop = nextTop;"
+                        "  return {scrollTop: el.scrollTop || 0, atEnd: nextTop >= Math.max(el.scrollHeight - el.clientHeight, 0)};"
+                        "}",
+                        max(client_height - 40, 120),
+                    )
+                    if state.get("atEnd"):
+                        break
+            except Exception:
+                break
+        final_fullpage_path, final_chatbox_path = _capture_stage(
+            page,
+            context,
+            case_id,
+            timestamp,
+            "after_answer_final",
+            config,
+            logger,
+        )
+        if final_chatbox_path:
+            chat_paths.append(final_chatbox_path)
+            last_chatbox_path = final_chatbox_path
+        if final_fullpage_path:
+            last_fullpage_path = final_fullpage_path
+        return chat_paths, last_chatbox_path, last_fullpage_path, multi_page
+
+    fullpage_path, chatbox_path = _capture_stage(page, context, case_id, timestamp, "after_answer", config, logger)
+    if chatbox_path:
+        chat_paths.append(chatbox_path)
+        last_chatbox_path = chatbox_path
+    if fullpage_path:
+        last_fullpage_path = fullpage_path
+    return chat_paths, last_chatbox_path, last_fullpage_path, multi_page
+
+
+def verify_submit_effect(context: ResolvedChatContext, question: str, input_locator: Locator, before_value: str) -> bool:
     """Verify that submitting the question had a real effect on the chat UI."""
 
     runtime = _runtime()
     input_type = detect_input_kind(input_locator)
     after_value = _read_input_value(input_locator, input_type)
-    input_cleared = after_value == ""
+    input_cleared = bool(before_value.strip()) and after_value == "" and after_value != before_value
     runtime.logger.info("[SUBMIT] after_send input value: %s", after_value)
     runtime.logger.info("[SUBMIT] input cleared %s", input_cleared)
 
@@ -819,6 +1880,7 @@ def verify_submit_effect(context: ResolvedChatContext, question: str, input_loca
     send_button_state_changed = send_button_enabled_after != context.baseline_send_button_enabled
 
     runtime.logger.info("[HISTORY] history extracted count: %s", len(history_after))
+    runtime.logger.info("[SUBMIT] history changed after submit %s", history_count_changed)
     runtime.logger.info("[SUBMIT] user echo verified %s", user_echo)
     runtime.logger.info("[SUBMIT] history count increased %s", history_count_changed)
     runtime.logger.info("[SUBMIT] history contains question %s", history_contains_question)
@@ -831,9 +1893,8 @@ def verify_submit_effect(context: ResolvedChatContext, question: str, input_loca
             user_echo,
             history_count_changed,
             history_contains_question,
-            visible_contains_question,
-            visible_text_changed,
             send_button_state_changed,
+            visible_contains_question and visible_text_changed,
         ]
     )
     runtime.logger.info("[SUBMIT] submit effect verified %s", verified)
@@ -852,20 +1913,40 @@ def trigger_submit(page: Page, context: ResolvedChatContext, question: str) -> t
     runtime.logger.info("[SUBMIT] before_send input value: %s", before_value)
     runtime.logger.info("[SUBMIT] send button found: %s", context.send_locator is not None)
 
-    methods: list[tuple[str, bool]] = []
-    if context.send_locator is not None:
-        methods.append(("button_click", True))
-    methods.append(("enter", False))
+    runtime.logger.info("[SUBMIT] send button enabled before submit: %s", _is_send_button_enabled(context.send_locator))
 
-    for method_name, use_button in methods:
+    methods: list[str] = []
+    if context.send_locator is not None:
+        methods.append("button_click")
+    methods.extend(["enter_input", "enter_active_element", "enter_page"])
+
+    for method_name in methods:
+        runtime.logger.info("[SUBMIT] submit method attempted: %s", method_name)
         try:
-            if use_button and context.send_locator is not None:
+            if method_name == "button_click" and context.send_locator is not None:
                 context.send_locator.click(timeout=2500)
-                runtime.logger.info("[SUBMIT] send button clicked")
-            else:
+                runtime.logger.info("[SUBMIT] send click attempted")
+            elif method_name == "enter_input":
                 input_locator.click(timeout=1500)
                 input_locator.press("Enter")
-                runtime.logger.info("[SUBMIT] Enter submit attempted")
+                runtime.logger.info("[SUBMIT] Enter attempted on input locator")
+            elif method_name == "enter_active_element":
+                active_entered = context.scope.evaluate(
+                    "() => {"
+                    "  const el = document.activeElement;"
+                    "  if (!el) return false;"
+                    "  el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));"
+                    "  el.dispatchEvent(new KeyboardEvent('keypress', {key: 'Enter', bubbles: true}));"
+                    "  el.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', bubbles: true}));"
+                    "  return true;"
+                    "}"
+                )
+                if not active_entered:
+                    raise RuntimeError("active element not available")
+                runtime.logger.info("[SUBMIT] Enter attempted on active element")
+            else:
+                page.keyboard.press("Enter")
+                runtime.logger.info("[SUBMIT] Enter attempted on page")
         except Exception as exc:
             runtime.logger.warning("[SUBMIT] %s failed: %s", method_name, exc)
             continue
@@ -888,8 +1969,9 @@ def trigger_submit(page: Page, context: ResolvedChatContext, question: str) -> t
         except Exception:
             pass
 
-        submit_effect_verified = verify_submit_effect(context, question, input_locator)
+        submit_effect_verified = verify_submit_effect(context, question, input_locator, before_value)
         user_echo_verified = verify_user_message_echo(context, question, runtime.logger)
+        runtime.logger.info("[SUBMIT] submit method used: %s", method_name)
         if submit_effect_verified:
             return True, method_name, user_echo_verified, after_send_chatbox, after_send_fullpage
 
@@ -901,68 +1983,113 @@ def submit_question(
     context: ResolvedChatContext,
     question: str,
 ) -> SubmissionEvidence:
-    """Enter a question, verify DOM state, trigger submit, and verify submit effect."""
+    """Submit a question using ranked editable-only failover candidates."""
 
     runtime = _runtime()
     capture_baseline_state(context)
+    ranked_candidates = collect_ranked_input_candidates(context)
+    allowed_candidates = [candidate for candidate in ranked_candidates if candidate["grade"] in {"A", "B"}]
+    top_candidate_disabled = _candidate_is_disabled_like(ranked_candidates[0] if ranked_candidates else None)
+    editable_candidates_count = len(allowed_candidates)
+    max_candidates = max(1, runtime.config.rubicon_max_input_candidates)
 
-    input_dom_verified, method_used = enter_question_with_verification(
-        context.scope, context.input_locator, question, runtime.logger
+    result = SubmissionEvidence(
+        input_dom_verified=False,
+        submit_effect_verified=False,
+        input_verified=False,
+        input_method_used="",
+        submit_method_used="unknown",
+        input_scope="",
+        input_selector="",
+        input_candidate_score=0.0,
+        top_candidate_disabled=top_candidate_disabled,
+        failover_attempts=0,
+        final_input_value_verified=False,
+        user_message_echo_verified=False,
+        input_failure_category="",
+        input_failure_reason="",
+        editable_candidates_count=editable_candidates_count,
+        final_input_target_frame="",
+        input_candidates_debug="\n".join(_candidate_debug_line(candidate) for candidate in ranked_candidates),
+        before_send_chatbox_path="",
+        before_send_fullpage_path="",
+        after_send_chatbox_path="",
+        after_send_fullpage_path="",
+        capture_reason="",
     )
-    input_dom_verified = input_dom_verified and verify_input_dom_state(context.input_locator, question)
 
-    if not input_dom_verified:
-        runtime.logger.error(
-            "[INPUT] verification failed — will not send question: %.60s", question
+    if not allowed_candidates:
+        result.input_failure_category = "top_candidate_disabled" if top_candidate_disabled else "no_editable_candidate_after_rescan"
+        result.input_failure_reason = "No Grade A/B editable candidate available"
+        return result
+
+    last_failure_category = "failover_exhausted"
+    last_failure_reason = "No editable candidate accepted the input"
+
+    for rank, candidate in enumerate(allowed_candidates[:max_candidates], start=1):
+        runtime.logger.info("[INPUT_V2][FAILOVER][TRY] rank=%s selector=%s", rank, candidate["selector"])
+        result.failover_attempts = rank
+        result.input_scope = candidate["scope_name"]
+        result.input_selector = candidate["selector"]
+        result.input_candidate_score = candidate["score"]
+        result.final_input_target_frame = candidate["scope_name"]
+
+        context.input_locator = candidate["locator"]
+        context.input_scope = candidate["scope"]
+        context.input_scope_name = candidate["scope_name"]
+        context.input_selector = candidate["selector"]
+        context.input_candidate_score = candidate["score"]
+        context.send_locator, _ = first_visible_locator(candidate["scope"], SEND_BUTTON_CANDIDATES, timeout_ms=800)
+        if context.send_locator is None:
+            context.send_locator, _ = first_visible_locator(context.scope, SEND_BUTTON_CANDIDATES, timeout_ms=800)
+
+        input_dom_verified, method_used = enter_question_with_verification(candidate["scope"], candidate["locator"], question, runtime.logger)
+        input_value_verified = input_dom_verified and verify_input_dom_state(candidate["locator"], question)
+        result.input_dom_verified = input_value_verified
+        result.final_input_value_verified = input_value_verified
+        result.input_method_used = method_used
+
+        if not input_value_verified:
+            last_failure_category = "failover_exhausted"
+            last_failure_reason = "Input value was not reflected in the candidate"
+            continue
+
+        before_send_fullpage, before_send_chatbox = capture_named_artifact(
+            page,
+            context,
+            runtime.current_case_id,
+            "before_send",
+            runtime.config,
         )
-        raise RuntimeError(
-            f"Question input not verified after all strategies: {question[:60]}"
-        )
+        result.before_send_fullpage_path = before_send_fullpage
+        result.before_send_chatbox_path = before_send_chatbox
 
-    runtime.logger.info(
-        "[INPUT] verification success: %.60s  (method=%s)", question, method_used
-    )
+        submit_effect_verified, submit_method_used, echo_verified, after_send_chatbox, after_send_fullpage = trigger_submit(page, context, question)
+        result.submit_effect_verified = submit_effect_verified
+        result.submit_method_used = submit_method_used
+        result.user_message_echo_verified = echo_verified
+        result.after_send_chatbox_path = after_send_chatbox
+        result.after_send_fullpage_path = after_send_fullpage
+        result.input_verified = input_value_verified and submit_effect_verified
 
-    before_send_fullpage, before_send_chatbox = _capture_stage(
-        page,
-        context,
-        runtime.current_case_id,
-        runtime.current_case_timestamp,
-        "before_send",
-        runtime.config,
-        runtime.logger,
-    )
+        if result.input_verified and echo_verified:
+            runtime.logger.info("[INPUT_V2][FAILOVER][SUCCESS] selector=%s method=%s", candidate["selector"], method_used)
+            return result
 
-    if not before_send_chatbox or not before_send_fullpage:
-        runtime.logger.error("[VERIFY] before_send evidence missing; capture is invalid")
-        raise RuntimeError("before_send screenshot missing")
+        if result.input_verified and not echo_verified:
+            last_failure_category = "user_echo_not_found"
+            last_failure_reason = "Question submit effect verified but user echo was not found"
+            continue
 
-    submit_effect_verified, submit_method_used, echo_verified, after_send_chatbox, after_send_fullpage = trigger_submit(
-        page, context, question
-    )
-    input_verified = input_dom_verified and submit_effect_verified
+        last_failure_category = "failover_exhausted"
+        last_failure_reason = "Candidate did not produce a verified submit effect"
 
-    capture_reason = ""
-    if not submit_effect_verified:
-        capture_reason = (
-            "Input value changed but submit effect not verified"
-            if method_used == "js"
-            else "Question submission effect not verified"
-        )
-
-    return SubmissionEvidence(
-        input_dom_verified=input_dom_verified,
-        submit_effect_verified=submit_effect_verified,
-        input_verified=input_verified,
-        input_method_used=method_used,
-        submit_method_used=submit_method_used,
-        before_send_chatbox_path=before_send_chatbox,
-        before_send_fullpage_path=before_send_fullpage,
-        after_send_chatbox_path=after_send_chatbox,
-        after_send_fullpage_path=after_send_fullpage,
-        user_message_echo_verified=echo_verified,
-        capture_reason=capture_reason,
-    )
+    runtime.logger.info("[INPUT_V2][FAILOVER][EXHAUSTED]")
+    result.input_failure_category = last_failure_category
+    result.input_failure_reason = last_failure_reason
+    if not result.capture_reason:
+        result.capture_reason = last_failure_reason
+    return result
 
 
 def _loading_visible(context: ResolvedChatContext) -> bool:
@@ -987,35 +2114,40 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult
     text_diff_observed = False
 
     while time.perf_counter() < deadline:
-        bot_messages = extract_bot_message_texts(context)
-        current_count = len(bot_messages)
-        count_increased = current_count > context.baseline_bot_count
-        new_text = detect_new_bot_text(context, context.baseline_bot_messages)
+        candidate_data = build_post_baseline_answer_candidates(context)
+        current_count = int(candidate_data.get("current_bot_count", 0) or 0)
+        count_increased = bool(candidate_data.get("bot_count_increased", False))
+        new_bot_segments = candidate_data.get("new_bot_segments", [])
+        visible_diff_segments = candidate_data.get("diff_segments", [])
+        filtered_new_bot_segments = candidate_data.get("strict_candidates", [])
+        filtered_diff_segments = candidate_data.get("fallback_candidates", [])
+        new_text = candidate_data.get("answer", "")
         if count_increased:
             count_increase_observed = True
         if new_text:
             text_diff_observed = True
 
+        runtime.logger.info("[ANSWER] current bot count: %s", current_count)
         runtime.logger.info("[ANSWER] new bot count detected %s", count_increased)
         runtime.logger.info("[ANSWER] new bot text diff detected %s", bool(new_text))
+        runtime.logger.info("[ANSWER] text diff segment count: %s", len(visible_diff_segments))
+        runtime.logger.info("[ANSWER] static UI segments filtered: %s", max(len(visible_diff_segments) - len(filtered_diff_segments), 0))
 
         if count_increased or new_text:
-            new_messages = bot_messages[context.baseline_bot_count : current_count] if count_increased else []
-            candidate_messages = [
-                message for message in new_messages if _is_new_response_candidate(message, context.baseline_bot_messages)
-            ]
-            if candidate_messages:
-                latest_text = candidate_messages[-1]
+            strict_candidates = candidate_data.get("strict_candidates", [])
+            if strict_candidates:
+                latest_text = strict_candidates[-1]
             elif new_text:
                 latest_text = new_text
             elif any(
                 _contains_baseline_menu(message)
                 or _normalize_text(message) in {_normalize_text(item) for item in context.baseline_bot_messages}
-                for message in new_messages
+                for message in new_bot_segments
             ):
                 baseline_menu_detected = True
                 latest_text = ""
             if latest_text:
+                runtime.logger.info("[ANSWER] final answer segment chosen: %s", latest_text)
                 if latest_text == previous_text:
                     stable_checks += 1
                 else:
@@ -1104,6 +2236,19 @@ def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: 
     )
 
 
+def _status_from_failure_category(category: str) -> str:
+    if category in {
+        "top_candidate_disabled",
+        "no_editable_candidate_after_rescan",
+        "failover_exhausted",
+        "user_echo_not_found",
+    }:
+        return "invalid_capture"
+    if category == "answer_not_extracted":
+        return "failed"
+    return "failed"
+
+
 def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     """Execute one public, non-login Rubicon chatbot scenario end-to-end."""
 
@@ -1115,12 +2260,17 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     context: ResolvedChatContext | None = None
     artifacts = BrowserArtifacts()
     answer = ""
+    answer_raw = ""
+    answer_normalized = ""
     extraction_source = "unknown"
     extraction_confidence = 0.0
+    ocr_text = ""
+    ocr_confidence = 0.0
     response_ms = 0
-    status = "passed"
+    status = "success"
     reason = ""
     error_message = ""
+    fix_suggestion = ""
     input_dom_verified = False
     submit_effect_verified = False
     input_verified = False
@@ -1128,6 +2278,24 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     submit_method_used = "unknown"
     opened_chat_screenshot_path = ""
     opened_full_screenshot_path = ""
+    opened_footer_screenshot_path = ""
+    open_method_used = ""
+    sdk_status = ""
+    availability_status = "unknown"
+    input_scope = ""
+    input_scope_name = ""
+    input_selector = ""
+    input_failure_category = ""
+    input_failure_reason = ""
+    input_candidate_score = 0.0
+    top_candidate_disabled = False
+    activation_attempted = False
+    activation_steps_tried = ""
+    editable_candidates_count = 0
+    failover_attempts = 0
+    final_input_target_frame = ""
+    input_candidates_debug = ""
+    input_candidate_logs: list[str] = []
     before_send_screenshot_path = ""
     before_send_full_screenshot_path = ""
     after_send_screenshot_path = ""
@@ -1139,12 +2307,34 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     message_history: list[str] = []
     after_answer_screenshot_path = ""
     after_answer_full_screenshot_path = ""
+    answer_screenshot_paths: list[str] = []
+    after_answer_multi_page = False
+    structured_message_history_count = 0
+    fallback_diff_used = False
+    sdk_info: dict[str, Any] = {"has_sprchat": False, "trigger_exists": False}
+    open_result: dict[str, Any] = {"open_method": "failed", "open_ok": False, "open_error": ""}
+    activation_result: dict[str, Any] = {
+        "activation_attempted": False,
+        "activation_steps": [],
+        "activation_success": False,
+        "editable_candidates_after_activation": 0,
+    }
+    submission: SubmissionEvidence | None = None
 
     try:
         open_homepage(page)
         font_fix_applied = inject_korean_font(page)
         dismiss_popups(page)
-        open_rubicon_widget(page)
+        sdk_info = get_sprinklr_sdk_status(page)
+        sdk_status = f"has_sprchat={sdk_info.get('has_sprchat', False)} trigger_exists={sdk_info.get('trigger_exists', False)}"
+        bind_availability_probe(page)
+        open_result = open_chat_widget_or_conversation(page)
+        open_method_used = str(open_result.get("open_method", "failed"))
+        availability_status = get_availability_probe(page)
+
+        if not open_result.get("open_ok"):
+            input_failure_category = "sdk_not_available" if not sdk_info.get("has_sprchat") else "no_chat_open"
+            input_failure_reason = str(open_result.get("open_error") or "Failed to open chat widget")
 
         opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
             page,
@@ -1156,60 +2346,121 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             runtime.logger,
         )
 
-        context = resolve_chat_context(page)
-        opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
-            page,
-            context,
-            test_case.id,
-            runtime.current_case_timestamp,
-            "opened",
-            runtime.config,
-            runtime.logger,
-        )
+        try:
+            context = resolve_chat_context(page)
+        except Exception as exc:
+            if not input_failure_category:
+                input_failure_category = "availability_unavailable" if availability_status.lower() in UNAVAILABLE_AVAILABILITY_VALUES else "no_chat_open"
+                input_failure_reason = str(exc)
+            context = None
 
-        submission = submit_question(page, context, test_case.question)
-        input_dom_verified = submission.input_dom_verified
-        submit_effect_verified = submission.submit_effect_verified
-        input_verified = submission.input_verified
-        input_method_used = submission.input_method_used
-        submit_method_used = submission.submit_method_used
-        before_send_screenshot_path = submission.before_send_chatbox_path
-        before_send_full_screenshot_path = submission.before_send_fullpage_path
-        after_send_screenshot_path = submission.after_send_chatbox_path
-        after_send_full_screenshot_path = submission.after_send_fullpage_path
-        user_message_echo_verified = submission.user_message_echo_verified
-
-        if not input_dom_verified or not before_send_screenshot_path or not before_send_full_screenshot_path:
-            status = "invalid_capture"
-            reason = "Question input DOM state was not verified or before_send evidence is missing"
-            error_message = reason
-            runtime.logger.error("[VERIFY] invalid capture before send for %s", test_case.id)
-        elif not submit_effect_verified:
-            status = "invalid_capture"
-            reason = submission.capture_reason or "Question submission effect not verified"
-            error_message = reason
-            runtime.logger.error("[VERIFY] invalid capture after send for %s", test_case.id)
-        else:
-            wait_result = wait_for_new_bot_response(context, context.baseline_bot_count)
-            answer = wait_result.answer
-            response_ms = wait_result.response_ms
-            new_bot_response_detected = wait_result.new_bot_response_detected
-            baseline_menu_detected = wait_result.baseline_menu_detected
-
-            after_answer_full_screenshot_path, after_answer_screenshot_path = _capture_stage(
+        if context is not None:
+            input_scope = context.input_scope or context.input_scope_name or context.scope_name
+            input_scope_name = context.input_scope_name or context.scope_name
+            input_selector = context.input_selector
+            input_candidate_score = context.input_candidate_score
+            input_candidate_logs = list(context.input_candidate_logs)
+            input_candidates_debug = "\n".join(input_candidate_logs)
+            context.frame_inventory = scan_frame_inventory(page)
+            opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
                 page,
                 context,
                 test_case.id,
                 runtime.current_case_timestamp,
-                "after_answer",
+                "opened",
                 runtime.config,
                 runtime.logger,
             )
+            _, opened_footer_screenshot_path = capture_named_artifact(
+                page,
+                context,
+                test_case.id,
+                "opened_footer",
+                runtime.config,
+            )
+
+            submission = submit_question(page, context, test_case.question)
+            if not submission.input_verified and runtime.config.rubicon_force_activation:
+                activation_result = ensure_composer_ready(page, context)
+                activation_attempted = bool(activation_result.get("activation_attempted", False))
+                activation_steps_tried = ", ".join(activation_result.get("activation_steps", []))
+                editable_candidates_count = int(activation_result.get("editable_candidates_after_activation", 0) or 0)
+                context.frame_inventory = scan_frame_inventory(page)
+                submission = submit_question(page, context, test_case.question)
+            else:
+                activation_attempted = False
+                editable_candidates_count = submission.editable_candidates_count
+
+            if submission is not None:
+                input_dom_verified = submission.input_dom_verified
+                submit_effect_verified = submission.submit_effect_verified
+                input_verified = submission.input_verified
+                input_method_used = submission.input_method_used
+                submit_method_used = submission.submit_method_used
+                input_scope = submission.input_scope or input_scope
+                input_scope_name = submission.input_scope or input_scope_name
+                input_selector = submission.input_selector or input_selector
+                input_candidate_score = submission.input_candidate_score or input_candidate_score
+                top_candidate_disabled = submission.top_candidate_disabled
+                failover_attempts = submission.failover_attempts
+                final_input_target_frame = submission.final_input_target_frame
+                user_message_echo_verified = submission.user_message_echo_verified
+                before_send_screenshot_path = submission.before_send_chatbox_path
+                before_send_full_screenshot_path = submission.before_send_fullpage_path
+                after_send_screenshot_path = submission.after_send_chatbox_path
+                after_send_full_screenshot_path = submission.after_send_fullpage_path
+                editable_candidates_count = submission.editable_candidates_count or editable_candidates_count
+                input_candidates_debug = submission.input_candidates_debug or input_candidates_debug
+                input_candidate_logs = [line for line in input_candidates_debug.splitlines() if line.strip()]
+                if submission.input_failure_category:
+                    input_failure_category = submission.input_failure_category
+                    input_failure_reason = submission.input_failure_reason
+
+        if context is None or submission is None or not submission.input_verified:
+            if not input_failure_category:
+                input_failure_category = "no_editable_candidate_after_rescan"
+                input_failure_reason = "Submit flow never reached a verified editable input candidate"
+            status = _status_from_failure_category(input_failure_category)
+            reason = input_failure_reason
+            error_message = input_failure_reason
+            if status == "invalid_capture":
+                fix_suggestion = CAPTURE_INVALID_FIX
+        else:
+            wait_result = wait_for_new_bot_response(context, context.baseline_bot_count)
+            answer_raw = wait_result.answer
+            answer_normalized = _normalize_answer_text(wait_result.answer)
+            answer = answer_normalized
+            response_ms = wait_result.response_ms
+            new_bot_response_detected = wait_result.new_bot_response_detected
+            baseline_menu_detected = wait_result.baseline_menu_detected
+
+            if runtime.config.rubicon_after_answer_screenshot:
+                (
+                    answer_screenshot_paths,
+                    after_answer_screenshot_path,
+                    after_answer_full_screenshot_path,
+                    after_answer_multi_page,
+                ) = _capture_answer_screenshots(
+                    page,
+                    context,
+                    test_case.id,
+                    runtime.current_case_timestamp,
+                    runtime.config,
+                    runtime.logger,
+                )
 
             artifacts = capture_artifacts(page, context, test_case.id)
 
-            dom_payload = extract_dom_payload(context, artifacts.html_fragment_path)
+            dom_payload = extract_dom_payload(context, artifacts.html_fragment_path, question=test_case.question)
+            dom_answer = dom_payload.get("answer", "")
+            if dom_answer:
+                answer_raw = dom_answer
+                answer_normalized = _normalize_answer_text(answer_raw)
+                answer = answer_normalized
             message_history = dom_payload.get("history", [])
+            structured_message_history_count = int(dom_payload.get("structured_message_history_count", 0) or 0)
+            fallback_diff_used = bool(dom_payload.get("fallback_diff_used", False))
+            runtime.logger.info("[HISTORY] visible text block count: %s", len(dom_payload.get("visible_text_blocks", [])))
             if not message_history:
                 runtime.logger.warning(
                     "[HISTORY] no structured message history extracted; falling back to visible chat text scan"
@@ -1217,43 +2468,51 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 visible_text = dom_payload.get("visible_chat_text", "")
                 message_history = [line for line in visible_text.splitlines() if line.strip()]
                 runtime.logger.info("[HISTORY] visible chat text fallback used")
+                fallback_diff_used = True
             runtime.logger.info("[HISTORY] history extracted count: %s", len(message_history))
+            runtime.logger.info("[HISTORY] structured message history count: %s", structured_message_history_count)
+            runtime.logger.info("[HISTORY] fallback diff used: %s", fallback_diff_used)
 
             if not new_bot_response_detected:
-                status = "invalid_capture"
+                status = "failed"
+                input_failure_category = "answer_not_extracted"
                 reason = wait_result.reason
                 error_message = wait_result.reason
-            elif answer:
+                input_failure_reason = wait_result.reason
+            elif answer_raw:
                 extraction_source = "dom"
                 extraction_confidence = 1.0
                 runtime.logger.info("DOM extracted")
             elif runtime.config.enable_ocr_fallback and artifacts.chatbox_screenshot is not None:
                 ocr_text, confidence = extract_text_from_image(artifacts.chatbox_screenshot, runtime.logger)
                 if ocr_text:
-                    answer = ocr_text
+                    answer_raw = ocr_text
+                    answer_normalized = _normalize_answer_text(ocr_text)
+                    answer = answer_normalized
                     extraction_source = "ocr"
                     extraction_confidence = confidence
+                    ocr_confidence = confidence
                     runtime.logger.info("OCR fallback used")
 
-            if not answer:
-                status = "invalid_capture"
-                reason = reason or "Message history extraction failed"
+            if not answer_raw:
+                input_failure_category = "answer_not_extracted"
+                input_failure_reason = reason or "No answer text extracted"
+                status = "failed"
+                reason = input_failure_reason
                 error_message = error_message or reason
-            elif not user_message_echo_verified and not (submit_effect_verified and new_bot_response_detected):
+            elif not user_message_echo_verified:
+                input_failure_category = "user_echo_not_found"
+                input_failure_reason = "Question submission not reflected as a user echo"
                 status = "invalid_capture"
-                reason = "Question submission not reflected in chat history"
+                reason = input_failure_reason
                 error_message = reason
-            elif status == "passed":
+                fix_suggestion = CAPTURE_INVALID_FIX
+            elif status == "success":
                 reason = "Validated submitted question effect and detected a new bot response after baseline"
     except RuntimeError as exc:
-        # RuntimeError raised by submit_question means input was never verified
         err_str = str(exc)
-        if "not verified" in err_str or "before_send screenshot missing" in err_str:
-            status = "invalid_capture"
-            reason = err_str
-        else:
-            status = "failed"
-            reason = err_str
+        status = "failed"
+        reason = err_str
         error_message = err_str
         runtime.logger.error("exception details: %s", exc)
         try:
@@ -1280,6 +2539,9 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         locale=test_case.locale,
         question=test_case.question,
         answer=answer,
+        answer_raw=answer_raw,
+        answer_normalized=answer_normalized,
+        actual_answer=answer_raw or answer,
         extraction_source=extraction_source,
         extraction_confidence=extraction_confidence,
         response_ms=response_ms,
@@ -1291,6 +2553,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         video_path="",
         trace_path="",
         html_fragment_path=str(artifacts.html_fragment_path or runtime.latest_html_fragment_path or ""),
+        fix_suggestion=fix_suggestion,
         input_dom_verified=input_dom_verified,
         submit_effect_verified=submit_effect_verified,
         input_verified=input_verified,
@@ -1298,6 +2561,24 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         submit_method_used=submit_method_used,
         opened_chat_screenshot_path=opened_chat_screenshot_path,
         opened_full_screenshot_path=opened_full_screenshot_path,
+        opened_footer_screenshot_path=opened_footer_screenshot_path,
+        open_method_used=open_method_used,
+        sdk_status=sdk_status,
+        availability_status=availability_status,
+        input_scope=input_scope,
+        input_scope_name=input_scope_name,
+        input_selector=input_selector,
+        input_failure_category=input_failure_category,
+        input_failure_reason=input_failure_reason,
+        input_candidate_score=input_candidate_score,
+        top_candidate_disabled=top_candidate_disabled,
+        activation_attempted=activation_attempted,
+        activation_steps_tried=activation_steps_tried,
+        editable_candidates_count=editable_candidates_count,
+        failover_attempts=failover_attempts,
+        final_input_target_frame=final_input_target_frame,
+        input_candidates_debug=input_candidates_debug,
+        input_candidate_logs=input_candidate_logs,
         before_send_screenshot_path=before_send_screenshot_path,
         before_send_full_screenshot_path=before_send_full_screenshot_path,
         after_send_screenshot_path=after_send_screenshot_path,
@@ -1308,6 +2589,12 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         user_message_echo_verified=user_message_echo_verified,
         new_bot_response_detected=new_bot_response_detected,
         baseline_menu_detected=baseline_menu_detected,
+        answer_screenshot_paths=answer_screenshot_paths,
+        after_answer_multi_page=after_answer_multi_page,
+        ocr_text=ocr_text,
+        ocr_confidence=ocr_confidence,
+        structured_message_history_count=structured_message_history_count,
+        fallback_diff_used=fallback_diff_used,
         message_history=message_history,
     )
 

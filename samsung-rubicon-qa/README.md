@@ -14,6 +14,9 @@ mock answer나 simulated result는 절대 생성하지 않는다.
 DOM 값 변경만으로는 질문 제출 성공이 아니다.
 js 입력은 임시 fallback이며 신뢰도가 낮다.
 가장 중요한 것은 submit_effect_verified 와 new_bot_response_detected 다.
+비디오는 저장하지 않는다.
+긴 답변은 챗창 내부를 스크롤하며 여러 장으로 캡처한다.
+실제 저장용 답변 원본은 DOM에서 추출한 answer_raw, answer_normalized 다.
 
 ## 결과 확인 순서
 
@@ -64,8 +67,8 @@ samsung-rubicon-qa/
 
 - HEADLESS=false
 - DEFAULT_LOCALE=ko-KR
-- ENABLE_VIDEO=true
-- ENABLE_TRACE=true
+- ENABLE_VIDEO=false
+- ENABLE_TRACE=false
 - ENABLE_OCR_FALLBACK=false
 
 즉, python run.py 한 줄로 실행했을 때 사람이 브라우저를 직접 볼 수 있어야 한다.
@@ -131,10 +134,10 @@ PWDEBUG=1 python run.py
 5. page DOM에서 입력창 탐색
 6. 없으면 page.frames 순회로 iframe 안 입력창 탐색
 7. 챗이 열리면 opened 스크린샷 저장
-8. 질문 입력 시 fill -> press_sequentially -> keyboard.type -> JS fallback 순서로 시도
+8. 질문 입력 시 press_sequentially -> keyboard.type -> fill -> JS fallback 순서로 시도
 9. DOM input state 검증
 10. before_send 스크린샷 저장
-11. send button click 또는 Enter 로 제출 시도
+11. send button click -> input Enter -> page Enter -> active element Enter 순서로 제출 시도
 12. after_send 스크린샷 저장
 13. input clear, user echo, history 변화, visible text 변화 등 submit effect 검증
 14. 질문 전 baseline bot message 개수와 baseline text snapshot 기록
@@ -199,11 +202,12 @@ artifacts/fullpage/{timestamp}_{case}_after_send.png
 artifacts/fullpage/{timestamp}_{case}_after_answer.png
 ```
 
-가능하면 함께 저장:
+긴 답변은 필요 시 아래처럼 여러 장으로 저장한다.
 
 ```text
-artifacts/video/{timestamp}_{case}.webm
-artifacts/trace/{timestamp}_{case}.zip
+artifacts/chatbox/{timestamp}_{case}_after_answer_part_01.png
+artifacts/chatbox/{timestamp}_{case}_after_answer_part_02.png
+artifacts/chatbox/{timestamp}_{case}_after_answer_final.png
 ```
 
 ## 결과 파일
@@ -222,9 +226,11 @@ artifacts/trace/{timestamp}_{case}.zip
 - 새 응답 감지 여부
 - baseline menu 감지 여부
 - 실제 답변
+- answer_raw
+- extraction_source
 - 평가 결과
 - opened, before_send, after_send, after_answer 스크린샷 경로
-- trace, video, html fragment 경로
+- answer_screenshot_paths, html fragment 경로
 
 콘솔도 케이스마다 아래 순서로 출력한다.
 
@@ -237,15 +243,15 @@ SUBMIT EFFECT VERIFIED: True
 INPUT VERIFIED: True
 INPUT METHOD: press_sequentially
 SUBMIT METHOD USED: button_click
-QUESTION ECHO VERIFIED: True
-NEW BOT RESPONSE RECEIVED: True
+USER MESSAGE ECHO VERIFIED: True
+NEW BOT RESPONSE DETECTED: True
 BASELINE MENU DETECTED: False
 ANSWER: ...
 OVERALL SCORE: 0.84
 NEEDS HUMAN REVIEW: False
 CHECK FIRST: reports/latest_conversation.md
 BEFORE SEND SCREENSHOT: artifacts/chatbox/..._before_send.png
-AFTER ANSWER SCREENSHOT: artifacts/chatbox/..._after_answer.png
+AFTER ANSWER SCREENSHOTS: artifacts/chatbox/..._after_answer_part_01.png, artifacts/chatbox/..._after_answer_final.png
 ==================================================
 ```
 
@@ -257,20 +263,35 @@ AFTER ANSWER SCREENSHOT: artifacts/chatbox/..._after_answer.png
 {
   "run_timestamp": "",
   "case_id": "",
+  "category": "",
+  "page_url": "https://www.samsung.com/sec/",
   "question": "",
   "answer": "",
+  "answer_raw": "",
+  "answer_normalized": "",
+  "input_dom_verified": false,
+  "submit_effect_verified": false,
   "input_verified": false,
   "input_method_used": "",
+  "submit_method_used": "",
   "user_message_echo_verified": false,
   "new_bot_response_detected": false,
   "baseline_menu_detected": false,
   "status": "",
+  "error_message": "",
   "reason": "",
+  "fix_suggestion": "",
+  "message_history": [],
+  "html_fragment_path": "",
+  "extraction_source": "dom",
+  "ocr_text": "",
+  "ocr_confidence": 0.0,
   "before_send_screenshot_path": "",
+  "after_send_screenshot_path": "",
   "after_answer_screenshot_path": "",
+  "answer_screenshot_paths": [],
+  "after_answer_multi_page": false,
   "full_screenshot_path": "",
-  "video_path": "",
-  "trace_path": "",
   "overall_score": 0.0,
   "needs_human_review": true
 }
@@ -278,11 +299,86 @@ AFTER ANSWER SCREENSHOT: artifacts/chatbox/..._after_answer.png
 
 ## 상태값 정의
 
-- passed: 질문 입력 검증 성공, 새 bot response 감지 성공, 답변 추출 성공, 평가 완료
+- success: 질문 입력 검증 성공, 새 bot response 감지 성공, 답변 추출 성공, 평가 완료
 - failed: locator 실패, 타임아웃, 예외 등 일반 실패
 - invalid_capture: 질문 입력 검증 실패, before_send 증적 부재, 새 응답 감지 실패, baseline 메뉴만 추출된 경우
 
-invalid_capture 에서는 평가를 금지한다.
+invalid_capture 에서는 GPT 정상 평가는 건너뛰고 fallback 평가만 남긴다.
+
+## Debugging Disabled Composer
+
+Sprinklr 챗 UI는 footer가 열려 있어도 실제 composer가 ready 상태가 아닐 수 있다.
+이 프로젝트는 이제 disabled textarea를 입력 실패의 증거로만 남기고, 최종 입력 대상은 Grade A/B editable 후보로만 제한한다.
+
+핵심 확인 순서:
+
+1. reports/latest_conversation.md 의 Input Candidates 섹션에서 top candidate가 disabled인지 본다.
+2. reports/runtime.log 에서 ` [INPUT_V2][FRAME_INVENTORY] `, ` [INPUT_V2][RANKED_CANDIDATES] `, ` [SPR][ACTIVATION] ` 로그를 본다.
+3. opened_footer 스크린샷에서 footer만 열린 상태인지, before_send 스크린샷에서 실제 입력값이 보이는지 확인한다.
+
+## Meaning of invalid_capture
+
+invalid_capture 는 단순 locator miss가 아니라, 열린 footer와 실제 제출 가능한 composer를 구분하지 못했거나, 제출 증거가 부족한 경우를 뜻한다.
+
+주요 분류:
+
+- top_candidate_disabled
+- no_editable_candidate_after_rescan
+- failover_exhausted
+- user_echo_not_found
+
+반대로 answer_not_extracted 는 입력과 전송 이후 응답을 얻지 못한 케이스라 failed 로 남길 수 있다.
+
+## latest_conversation.md 보는 법
+
+최우선 확인 파일은 reports/latest_conversation.md 다.
+
+케이스별로 아래를 한 번에 본다.
+
+- Open Method Used
+- SDK Status
+- Availability Status
+- Input Scope / Input Selector / Input Candidate Score
+- Top Candidate Disabled
+- Activation Attempted / Activation Steps Tried
+- Failover Attempts / Final Input Target Frame
+- Input Failure Category / Input Failure Reason
+- Actual Answer / Answer Raw / Extraction Source
+
+## opened_footer / before_send / after_answer 스크린샷 의미
+
+- opened_footer: 챗 footer가 열렸는지, 아직 disabled shell 인지 확인하는 증거
+- before_send: 최종 입력 후보에 질문 텍스트가 실제 반영됐는지 확인하는 증거
+- after_answer: baseline 이후 새 bot 응답이 실제로 생성됐는지 확인하는 증거
+
+opened_footer 는 open 성공과 composer ready 를 분리해서 보는 용도다.
+before_send 가 없거나 비어 있으면 제출 이전 캡처가 부족한 것이다.
+after_answer 가 없거나 answer_not_extracted 로 끝나면 입력은 됐어도 실제 응답 확보에는 실패한 것이다.
+
+## runtime.log 핵심 prefix
+
+다음 prefix 순서대로 보면 어디서 멈췄는지 빠르게 알 수 있다.
+
+- ` [SPR][SDK_STATUS] `
+- ` [SPR][OPEN][TRY] `
+- ` [SPR][OPEN][FALLBACK] `
+- ` [SPR][OPEN][OK] `
+- ` [SPR][OPEN][FAIL] `
+- ` [SPR][AVAILABILITY][SUBSCRIBED] `
+- ` [SPR][AVAILABILITY][STATE] `
+- ` [INPUT_V2][FRAME_INVENTORY] `
+- ` [INPUT_V2][RANKED_CANDIDATES] `
+- ` [SPR][ACTIVATION][START] `
+- ` [SPR][ACTIVATION][CLICK] `
+- ` [SPR][ACTIVATION][STATE] `
+- ` [SPR][ACTIVATION][SUCCESS] `
+- ` [SPR][ACTIVATION][EXHAUSTED] `
+- ` [INPUT_V2][FAILOVER][TRY] `
+- ` [INPUT_V2][FAILOVER][SUCCESS] `
+- ` [INPUT_V2][FAILOVER][EXHAUSTED] `
+- ` [INPUT_V2][ECHO][FOUND] `
+- ` [INPUT_V2][ECHO][NOT_FOUND] `
+- ` [ARTIFACT][SAVE] `
 
 ## 실패 판정 기준
 
@@ -314,6 +410,8 @@ PWDEBUG=1 python run.py
 4. before_send 시점에 입력창 DOM 값과 화면 표시가 일치하는지
 
 ### Trace Viewer
+
+정상 경로에서는 trace를 저장하지 않는다. 아래는 디버깅 모드에서 수동으로 ENABLE_TRACE=true 로 켰을 때만 사용한다.
 
 ```bash
 playwright show-trace artifacts/trace/<trace-file>.zip

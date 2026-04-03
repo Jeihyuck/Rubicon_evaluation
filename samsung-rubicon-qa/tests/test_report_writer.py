@@ -32,10 +32,18 @@ def _make_config(tmpdir: str) -> AppConfig:
         enable_video=False,
         enable_trace=False,
         enable_ocr_fallback=False,
+        rubicon_chat_debug=False,
+        rubicon_force_activation=True,
+        rubicon_disable_sdk=False,
+        rubicon_max_input_candidates=5,
+        rubicon_frame_rescan_rounds=3,
+        rubicon_before_send_screenshot=True,
+        rubicon_opened_footer_screenshot=True,
+        rubicon_after_answer_screenshot=True,
     )
 
 
-def _make_result(case_id: str = "c01", status: str = "passed", score: float = 0.8) -> RunResult:
+def _make_result(case_id: str = "c01", status: str = "success", score: float = 0.8) -> RunResult:
     test_case = TestCase(
         id=case_id,
         category="service",
@@ -57,7 +65,9 @@ def _make_result(case_id: str = "c01", status: str = "passed", score: float = 0.
         extraction_confidence=1.0,
         response_ms=1200,
         status=status,
-        error_message="" if status == "passed" else "timeout",
+        answer_raw="서비스센터에서 가능합니다.",
+        answer_normalized="서비스센터에서 가능합니다.",
+        error_message="" if status == "success" else "timeout",
     )
     evaluation = EvalResult(
         overall_score=score,
@@ -110,6 +120,9 @@ class TestWriteReports:
                 rows = list(reader)
             assert len(rows) == 1
             assert "id" in rows[0]
+            assert "input_scope" in rows[0]
+            assert "open_method_used" in rows[0]
+            assert "availability_status" in rows[0]
             assert "pair_answer" in rows[0]
             assert "eval_overall_score" in rows[0]
 
@@ -125,7 +138,7 @@ class TestWriteReports:
 class TestBuildSummary:
     def test_summary_counts(self):
         results = [
-            _make_result("c01", status="passed", score=0.9),
+            _make_result("c01", status="success", score=0.9),
             _make_result("c02", status="failed", score=0.2),
         ]
         summary = _build_summary(results)
@@ -206,13 +219,31 @@ class TestBuildConversation:
         assert "Submit Effect Verified:" in content
         assert "Input Method:" in content
         assert "Submit Method Used:" in content
+        assert "Input Scope:" in content
+        assert "Input Selector:" in content
+        assert "Input Candidate Score:" in content
+        assert "Input Failure Category:" in content
+        assert "Input Failure Reason:" in content
         assert "User Message Echo Verified:" in content
         assert "New Bot Response Detected:" in content
+        assert "Top Candidate Disabled:" in content
+        assert "Activation Attempted:" in content
+        assert "Activation Steps Tried:" in content
+        assert "Editable Candidates Count:" in content
+        assert "Failover Attempts:" in content
+        assert "Final Input Target Frame:" in content
+        assert "SDK Status:" in content
+        assert "Availability Status:" in content
+        assert "Open Method Used:" in content
         assert "Actual Answer:" in content
-        assert "Capture Reason:" in content
-        assert "Submitted Chat Screenshot:" in content
-        assert "Answered Chat Screenshot:" in content
+        assert "Answer Raw:" in content
+        assert "Extraction Source:" in content
+        assert "Before Send Screenshot:" in content
+        assert "After Answer Screenshot:" in content
         assert "Fullpage Screenshot:" in content
+        assert "Chat Screenshot:" in content
+        assert "Opened Footer Screenshot:" in content
+        assert "### Input Candidates" in content
 
     def test_conversation_empty_history(self):
         """Message History shows '(empty)' when no history is captured."""
@@ -240,6 +271,34 @@ class TestBuildConversation:
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "- 안녕하세요." in content
         assert "- 서비스센터입니다." in content
+
+    def test_conversation_populated_input_candidates(self):
+        result = _make_result("c01")
+        result = replace(
+            result,
+            pair=replace(
+                result.pair,
+                input_scope_name="spr-chat__box-frame",
+                input_scope="frame[1]",
+                input_selector="textarea",
+                input_candidate_score=28,
+                input_failure_category="input locator found but disabled",
+                input_failure_reason="Input candidate exists but is disabled",
+                input_candidates_debug="score=28 selector=textarea visible=True editable=False disabled=True reason=disabled",
+                input_candidate_logs=["scope=spr-chat__box-frame score=28 selector=textarea index=0"],
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Input Scope: frame[1]" in content
+        assert "Input Selector: textarea" in content
+        assert "Input Candidate Score: 28" in content
+        assert "Input Failure Category: input locator found but disabled" in content
+        assert "score=28 selector=textarea visible=True editable=False disabled=True reason=disabled" in content
+
 
     def test_summary_mentions_latest_conversation_priority(self):
         summary = _build_summary([_make_result("c01")])

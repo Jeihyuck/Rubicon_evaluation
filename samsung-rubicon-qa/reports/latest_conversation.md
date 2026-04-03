@@ -6,32 +6,49 @@
 ## case01
 
 - Question: 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?
-- Input DOM Verified: True
+- Input DOM Verified: False
 - Submit Effect Verified: False
 - Input Verified: False
-- Input Method: js
+- Input Method: (none)
 - Submit Method Used: unknown
+- Input Scope: spr-chat__box-frame
+- Input Selector: textarea
+- Input Candidate Score: 28
+- Input Failure Category: input locator found but disabled
+- Input Failure Reason: Input candidate exists but is disabled
 - User Message Echo Verified: False
 - New Bot Response Detected: False
-- Status: invalid_capture
 - Baseline Menu Detected: False
-- Capture Reason: Input value changed but submit effect not verified
+- Status: failed
 - Actual Answer: (none)
+- Answer Raw: (none)
+- Extraction Source: unknown
+- Structured Message History Count: 0
+- Fallback Diff Used: False
+- After Answer Multi Page: False
 - Overall Score: 0.0
 - Needs Human Review: True
-- Submitted Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260401_072640_case01_before_send.png
-- After Send Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260401_072640_case01_after_send.png
-- Answered Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260401_072640_case01_after_answer.png
-- Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260401_072640_case01_after_answer.png
-- Opened Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260401_072640_case01_opened.png
-- Opened Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260401_072640_case01_opened.png
-- Before Send Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260401_072640_case01_before_send.png
-- After Send Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260401_072640_case01_after_send.png
-- After Answer Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260401_072640_case01_after_answer.png
-- HTML Fragment: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260401_072640_case01.html
-- Trace: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/trace/20260401_074107_case01.zip
-- Video: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/video/20260401_074107_case01.webm
-- Fix Suggestion: Check before_send/after_send screenshots and submission logs
+- Capture Reason: Input candidate exists but is disabled
+- Submitted Chat Screenshot: (none)
+- After Send Chat Screenshot: (none)
+- Answered Chat Screenshot: (none)
+- Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260402_090459_case01.png
+- Answer Screenshot Paths: (none)
+- Opened Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260402_090459_case01_opened.png
+- Opened Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260402_090459_case01_opened.png
+- Opened Footer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260402_090459_case01_opened_footer.png
+- Before Send Fullpage Screenshot: (none)
+- After Send Fullpage Screenshot: (none)
+- After Answer Fullpage Screenshot: (none)
+- HTML Fragment: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260402_090459_case01.html
+- Fix Suggestion: Check before_send/after_send screenshots, frame selection, and message diff logs
+
+### Input Candidates
+
+- scope=spr-chat__box-frame score=28 selector=textarea index=0 tag=textarea type= role= visible=True editable=False disabled=True obscured=False placeholder='대화창에 더이상 입력할 수 없습니다.' aria='대화창에 더이상 입력할 수 없습니다.' footerLike=True rect=(30,977,472,44)
+- scope=page score=21 selector=input[type='text'] index=0 tag=input type=text role= visible=False editable=True disabled=False obscured=False placeholder='궁금한 제품을 찾아보세요' aria='' footerLike=True rect=(81,32,1301,47)
+- scope=[samsung.com/sec](https://www.samsung.com/sec/) score=21 selector=input[type='text'] index=0 tag=input type=text role= visible=False editable=True disabled=False obscured=False placeholder='궁금한 제품을 찾아보세요' aria='' footerLike=True rect=(81,32,1301,47)
+- scope=spr-live-chat-frame score=19 selector=textarea index=0 tag=textarea type= role= visible=False editable=True disabled=False obscured=False placeholder='' aria='' footerLike=False rect=(-472,0,472,24)
 
 ### Message History
 

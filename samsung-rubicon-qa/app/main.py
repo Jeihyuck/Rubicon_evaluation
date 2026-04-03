@@ -39,10 +39,12 @@ def _print_case_summary(project_root: Path, result: RunResult) -> None:
     if pair.input_method_used:
         print(f"INPUT METHOD: {pair.input_method_used}")
     print(f"SUBMIT METHOD USED: {pair.submit_method_used}")
-    print(f"QUESTION ECHO VERIFIED: {pair.user_message_echo_verified}")
-    print(f"NEW BOT RESPONSE RECEIVED: {pair.new_bot_response_detected}")
+    print(f"USER MESSAGE ECHO VERIFIED: {pair.user_message_echo_verified}")
+    print(f"NEW BOT RESPONSE DETECTED: {pair.new_bot_response_detected}")
     if pair.status in {"invalid_capture", "failed"}:
         print(f"STATUS: {pair.status}")
+        if pair.input_failure_category:
+            print(f"INPUT FAILURE CATEGORY: {pair.input_failure_category}")
         print(f"REASON: {pair.reason or evaluation.reason}")
     else:
         print(f"BASELINE MENU DETECTED: {pair.baseline_menu_detected}")
@@ -50,10 +52,15 @@ def _print_case_summary(project_root: Path, result: RunResult) -> None:
         print(f"OVERALL SCORE: {evaluation.overall_score:.2f}")
         print(f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}")
     print("CHECK FIRST: reports/latest_conversation.md")
+    if pair.opened_footer_screenshot_path:
+        print(f"OPENED FOOTER SCREENSHOT: {_display_path(project_root, pair.opened_footer_screenshot_path)}")
     if pair.before_send_screenshot_path:
         print(f"BEFORE SEND SCREENSHOT: {_display_path(project_root, pair.before_send_screenshot_path)}")
-    if pair.after_answer_screenshot_path:
-        print(f"AFTER ANSWER SCREENSHOT: {_display_path(project_root, pair.after_answer_screenshot_path)}")
+    if pair.answer_screenshot_paths:
+        display_paths = ", ".join(_display_path(project_root, path) for path in pair.answer_screenshot_paths)
+        print(f"AFTER ANSWER SCREENSHOTS: {display_paths}")
+    elif pair.after_answer_screenshot_path:
+        print(f"AFTER ANSWER SCREENSHOTS: {_display_path(project_root, pair.after_answer_screenshot_path)}")
     print("=" * 50)
 
 
