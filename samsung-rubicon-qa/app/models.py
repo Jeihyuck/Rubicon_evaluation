@@ -38,6 +38,11 @@ class ExtractedPair:
     answer_raw: str = ""
     answer_normalized: str = ""
     actual_answer: str = ""
+    actual_answer_clean: str = ""
+    extraction_source_detail: str = ""
+    message_history_clean: str = ""
+    removed_followups: bool = False
+    noise_lines_removed: int = 0
     reason: str = ""
     error_message: str = ""
     full_screenshot_path: str = ""
@@ -154,6 +159,7 @@ class RunResult:
             "answer_raw": self.pair.answer_raw,
             "answer_normalized": self.pair.answer_normalized,
             "actual_answer": self.pair.actual_answer or self.pair.answer,
+            "actual_answer_clean": self.pair.actual_answer_clean or self.pair.actual_answer or self.pair.answer,
             "input_dom_verified": self.pair.input_dom_verified,
             "submit_effect_verified": self.pair.submit_effect_verified,
             "input_verified": self.pair.input_verified,
@@ -167,8 +173,12 @@ class RunResult:
             "reason": self.pair.reason,
             "fix_suggestion": self.pair.fix_suggestion or self.evaluation.fix_suggestion,
             "message_history": self.pair.message_history,
+            "message_history_clean": self.pair.message_history_clean,
             "html_fragment_path": self.pair.html_fragment_path,
             "extraction_source": self.pair.extraction_source,
+            "extraction_source_detail": self.pair.extraction_source_detail,
+            "removed_followups": self.pair.removed_followups,
+            "noise_lines_removed": self.pair.noise_lines_removed,
             "ocr_text": self.pair.ocr_text,
             "ocr_confidence": self.pair.ocr_confidence,
             "structured_message_history_count": self.pair.structured_message_history_count,

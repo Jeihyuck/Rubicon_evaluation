@@ -250,3 +250,7 @@ Failed to read: session.screen0.iconbar.iconTextPadding
 Setting default value
 Failed to read: session.screen0.iconbar.usePixmap
 Setting default value
+Failed to read: session.screen0.titlebar.left
+Setting default value
+Failed to read: session.screen0.titlebar.right
+Setting default value

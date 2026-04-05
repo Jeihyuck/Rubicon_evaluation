@@ -184,6 +184,42 @@ class TestResponseText:
 
 
 class TestEvaluatePair:
+    def test_evaluation_uses_actual_answer_clean_first(self):
+        import json
+        from dataclasses import replace
+
+        config = _make_config(api_key="sk-test")
+        logger = MagicMock()
+        pair = replace(
+            _make_pair(answer="가까운 서비스센터에서 바로 가능한가요?"),
+            actual_answer="서비스센터 방문으로 교체 가능합니다.",
+            actual_answer_clean="정제된 본문 답변",
+        )
+
+        response = MagicMock()
+        response.output_text = json.dumps(
+            {
+                "overall_score": 0.9,
+                "relevance_score": 0.9,
+                "clarity_score": 0.9,
+                "completeness_score": 0.9,
+                "keyword_alignment_score": 0.9,
+                "hallucination_risk": "low",
+                "needs_human_review": False,
+                "reason": "ok",
+                "fix_suggestion": "",
+            },
+            ensure_ascii=False,
+        )
+
+        with patch("app.evaluator.OpenAI") as mock_openai:
+            mock_openai.return_value.responses.create.return_value = response
+            evaluate_pair(config, _make_test_case(), pair, logger)
+
+        kwargs = mock_openai.return_value.responses.create.call_args.kwargs
+        user_payload = json.loads(kwargs["input"][1]["content"][0]["text"])
+        assert user_payload["answer"] == "정제된 본문 답변"
+
     def test_fallback_when_no_api_key(self):
         config = _make_config(api_key="")
         logger = MagicMock()

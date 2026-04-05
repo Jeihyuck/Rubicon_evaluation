@@ -27,6 +27,8 @@ def test_run_result_flatten_includes_new_fields():
             response_ms=1000,
             status="success",
             actual_answer="서비스센터에서 가능합니다.",
+            actual_answer_clean="서비스센터에서 가능합니다.",
+            extraction_source_detail="dom_main_answer",
             input_scope="frame[1]",
             input_selector=".ql-editor",
             input_candidate_score=97.0,
@@ -47,6 +49,9 @@ def test_run_result_flatten_includes_new_fields():
             sdk_status="has_sprchat=True trigger_exists=True",
             availability_status="available",
             input_candidates_debug="score=97 selector=.ql-editor visible=True editable=True disabled=False reason=allowed",
+            message_history_clean="질문\n답변",
+            removed_followups=True,
+            noise_lines_removed=2,
         ),
         evaluation=EvalResult(
             overall_score=0.9,
@@ -82,5 +87,10 @@ def test_run_result_flatten_includes_new_fields():
         "sdk_status",
         "availability_status",
         "extraction_source",
+        "actual_answer_clean",
+        "extraction_source_detail",
+        "message_history_clean",
+        "removed_followups",
+        "noise_lines_removed",
     ]:
         assert field in flat

@@ -93,8 +93,10 @@ def _build_conversation(run_results: list[RunResult]) -> str:
                 f"- Open Method Used: {pair.open_method_used or '(none)'}",
                 f"- Status: {pair.status}",
                 f"- Actual Answer: {pair.actual_answer or pair.answer or '(none)'}",
+                f"- Actual Answer Clean: {pair.actual_answer_clean or pair.actual_answer or pair.answer or '(none)'}",
                 f"- Answer Raw: {pair.answer_raw or '(none)'}",
                 f"- Extraction Source: {pair.extraction_source}",
+                f"- Message History Clean: {pair.message_history_clean or '(none)'}",
                 f"- Overall Score: {ev.overall_score}",
                 f"- Needs Human Review: {ev.needs_human_review}",
                 f"- Opened Footer Screenshot: {pair.opened_footer_screenshot_path or '(none)'}",
@@ -119,6 +121,14 @@ def _build_conversation(run_results: list[RunResult]) -> str:
 
         lines.extend(
             [
+                "",
+                "### Answer Extraction Debug",
+                "",
+                f"- selected_source={pair.extraction_source_detail or pair.extraction_source or 'unknown'}",
+                f"- raw_len={len(pair.answer_raw or '')}",
+                f"- clean_len={len(pair.actual_answer_clean or pair.actual_answer or pair.answer or '')}",
+                f"- removed_followups={pair.removed_followups}",
+                f"- noise_lines_removed={pair.noise_lines_removed}",
                 "",
                 "### Message History",
                 "",

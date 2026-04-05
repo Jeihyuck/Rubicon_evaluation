@@ -103,6 +103,10 @@ def _failed_answer_evaluation(pair: ExtractedPair) -> EvalResult:
     )
 
 
+def _evaluation_answer(pair: ExtractedPair) -> str:
+    return pair.actual_answer_clean or pair.actual_answer or pair.answer
+
+
 def _coerce_eval_payload(payload: dict[str, Any]) -> EvalResult:
     """Normalize model JSON to the required dataclass schema."""
 
@@ -146,6 +150,8 @@ def _response_text(response: Any) -> str:
 def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, logger: Any) -> EvalResult:
     """Evaluate a question-answer pair with OpenAI Structured Outputs."""
 
+    evaluation_answer = _evaluation_answer(pair)
+
     if pair.status == "invalid_capture":
         logger.warning(
             "Capture invalid for case %s (%s); using invalid-capture fallback evaluation",
@@ -165,9 +171,8 @@ def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, l
         return _failed_answer_evaluation(pair)
 
     if (
-        not pair.answer_raw
-        or not pair.answer_normalized
-        or pair.answer_normalized == "(none)"
+        not evaluation_answer
+        or evaluation_answer == "(none)"
         or not pair.input_verified
         or not pair.submit_effect_verified
         or not pair.new_bot_response_detected
@@ -197,7 +202,7 @@ def evaluate_pair(config: AppConfig, test_case: TestCase, pair: ExtractedPair, l
         "page_url": pair.page_url,
         "locale": pair.locale,
         "question": pair.question,
-        "answer": pair.answer_normalized,
+        "answer": evaluation_answer,
         "expected_keywords": test_case.expected_keywords,
         "forbidden_keywords": test_case.forbidden_keywords,
         "input_verified": pair.input_verified,

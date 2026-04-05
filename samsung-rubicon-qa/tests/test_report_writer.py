@@ -67,6 +67,8 @@ def _make_result(case_id: str = "c01", status: str = "success", score: float = 0
         status=status,
         answer_raw="서비스센터에서 가능합니다.",
         answer_normalized="서비스센터에서 가능합니다.",
+        actual_answer="서비스센터에서 가능합니다.",
+        actual_answer_clean="서비스센터에서 가능합니다.",
         error_message="" if status == "success" else "timeout",
     )
     evaluation = EvalResult(
@@ -236,14 +238,17 @@ class TestBuildConversation:
         assert "Availability Status:" in content
         assert "Open Method Used:" in content
         assert "Actual Answer:" in content
+        assert "Actual Answer Clean:" in content
         assert "Answer Raw:" in content
         assert "Extraction Source:" in content
+        assert "Message History Clean:" in content
         assert "Before Send Screenshot:" in content
         assert "After Answer Screenshot:" in content
         assert "Fullpage Screenshot:" in content
         assert "Chat Screenshot:" in content
         assert "Opened Footer Screenshot:" in content
         assert "### Input Candidates" in content
+        assert "### Answer Extraction Debug" in content
 
     def test_conversation_empty_history(self):
         """Message History shows '(empty)' when no history is captured."""
@@ -262,7 +267,7 @@ class TestBuildConversation:
         result = _make_result("c01")
         result = replace(
             result,
-            pair=replace(result.pair, message_history=["안녕하세요.", "서비스센터입니다."]),
+            pair=replace(result.pair, message_history=["안녕하세요.", "서비스센터입니다."], message_history_clean="안녕하세요.\n서비스센터입니다."),
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             config = _make_config(tmpdir)
@@ -271,6 +276,27 @@ class TestBuildConversation:
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "- 안녕하세요." in content
         assert "- 서비스센터입니다." in content
+        assert "Message History Clean: 안녕하세요.\n서비스센터입니다." in content
+
+    def test_conversation_shows_answer_extraction_debug_fields(self):
+        result = _make_result("c01")
+        result = replace(
+            result,
+            pair=replace(
+                result.pair,
+                extraction_source_detail="dom_main_answer",
+                removed_followups=True,
+                noise_lines_removed=3,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "selected_source=dom_main_answer" in content
+        assert "removed_followups=True" in content
+        assert "noise_lines_removed=3" in content
 
     def test_conversation_populated_input_candidates(self):
         result = _make_result("c01")

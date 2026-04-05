@@ -42,6 +42,8 @@ def _make_pair(case_id: str = "c01") -> ExtractedPair:
         status="success",
         answer_raw="서비스센터에서 가능합니다.",
         answer_normalized="서비스센터에서 가능합니다.",
+        actual_answer="서비스센터에서 가능합니다.",
+        actual_answer_clean="서비스센터에서 가능합니다.",
     )
 
 
@@ -163,6 +165,11 @@ class TestRunResult:
         assert record["structured_message_history_count"] == 0
         assert record["fallback_diff_used"] is False
         assert record["actual_answer"] == "서비스센터에서 가능합니다."
+        assert record["actual_answer_clean"] == "서비스센터에서 가능합니다."
+        assert record["message_history_clean"] == ""
+        assert record["extraction_source_detail"] == ""
+        assert record["removed_followups"] is False
+        assert record["noise_lines_removed"] == 0
         assert record["input_scope"] == ""
         assert record["top_candidate_disabled"] is False
         assert record["activation_attempted"] is False
@@ -270,3 +277,7 @@ class TestExtractedPairNewFields:
     def test_answer_normalized_stored(self):
         pair = replace(_make_pair(), answer_normalized="정리된 답변")
         assert pair.answer_normalized == "정리된 답변"
+
+    def test_actual_answer_clean_stored(self):
+        pair = replace(_make_pair(), actual_answer_clean="정제 답변")
+        assert pair.actual_answer_clean == "정제 답변"
