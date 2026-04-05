@@ -38,6 +38,23 @@ STATIC_UI_TEXTS = [
     "최대화",
     "아이콘 설명",
     "Maximize Widget",
+    "삼성닷컴 AI",
+    "AI 생성 메시지는 부정확할 수 있습니다",
+    "더보기",
+    "리치 텍스트 메시지",
+]
+
+FOLLOW_UP_SPLIT_MARKERS = [
+    "🔍 이어서 물어보세요",
+    "이어서 물어보세요",
+    "AI 생성 메시지는 부정확할 수 있습니다",
+]
+
+META_PREFIX_PATTERNS = [
+    r"^자세한 내용을 보려면 Enter를 누르세요[.\s,:-]*",
+    r"^리치 텍스트 메시지[.\s,:-]*",
+    r"^첨부[.\s,:-]*",
+    r"^더보기[.\s,:-]*",
 ]
 
 MESSAGE_LIKE_SELECTORS = [
@@ -71,31 +88,75 @@ USER_MESSAGE_SELECTORS = [
 
 
 def normalize_text_for_diff(text: str) -> str:
-    return " ".join(str(text or "").replace("\xa0", " ").split())
+    sanitized = re.sub(r"[\u200e\u200f\u202a-\u202e\ufeff]", "", str(text or ""))
+    return " ".join(sanitized.replace("\xa0", " ").split())
+
+
+def _static_ui_normalized() -> set[str]:
+    return {normalize_text_for_diff(text).lower() for text in STATIC_UI_TEXTS}
 
 
 def _normalize_multiline_text(text: str) -> str:
     return "\n".join(line.strip() for line in str(text or "").splitlines() if line.strip())
 
 
+def _strip_meta_text(text: str) -> str:
+    normalized = normalize_text_for_diff(text)
+    if not normalized:
+        return ""
+
+    for marker in FOLLOW_UP_SPLIT_MARKERS:
+        if marker in normalized:
+            normalized = normalized.split(marker, 1)[0].strip()
+
+    cleaned = normalized
+    prefix_trimmed = True
+    while prefix_trimmed:
+        prefix_trimmed = False
+        for pattern in META_PREFIX_PATTERNS:
+            updated = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+            if updated != cleaned:
+                cleaned = updated.strip()
+                prefix_trimmed = True
+
+    cleaned = re.sub(r"\b(?:좋아요|싫어요|싫어함|like|dislike|thumbs up|thumbs down)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:오전|오후)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned)
+    cleaned = re.sub(r"(?:AM|PM)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[0-9]{1,2}:[0-9]{2}(?:\s?[AP]M)?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r",?\s*[0-9]{4}년\s*[0-9]{1,2}월\s*[0-9]{1,2}일\s*에\s*(?:수신됨|전송됨)", " ", cleaned)
+    return " ".join(cleaned.split())
+
+
 def is_static_ui_text(text: str) -> bool:
     normalized = normalize_text_for_diff(text)
+    normalized_lower = normalized.lower()
     if not normalized:
         return True
     if len(normalized) <= 1:
         return True
     if re.fullmatch(r"[0-9]{1,2}:[0-9]{2}(?:\s?[AP]M)?", normalized, re.IGNORECASE):
         return True
+    if re.fullmatch(r"(?:오전|오후)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", normalized):
+        return True
+    if re.fullmatch(r"(?:AM|PM)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", normalized, re.IGNORECASE):
+        return True
     if re.fullmatch(r"[0-9]{4}[./-][0-9]{1,2}[./-][0-9]{1,2}", normalized):
         return True
-    return any(static_text.lower() in normalized.lower() for static_text in STATIC_UI_TEXTS)
+    return normalized_lower in _static_ui_normalized()
+
+
+def _contains_embedded_static_ui_text(text: str) -> bool:
+    normalized_lower = normalize_text_for_diff(text).lower()
+    if not normalized_lower:
+        return False
+    return any(static_text in normalized_lower for static_text in _static_ui_normalized() if static_text and static_text != normalized_lower)
 
 
 def remove_static_ui_segments(segments: list[str]) -> list[str]:
     filtered: list[str] = []
     seen: set[str] = set()
     for segment in segments:
-        normalized = normalize_text_for_diff(segment)
+        normalized = _strip_meta_text(segment)
         if not normalized or is_static_ui_text(normalized):
             continue
         if len(normalized) < 6:
@@ -103,7 +164,7 @@ def remove_static_ui_segments(segments: list[str]) -> list[str]:
         if normalized in seen:
             continue
         seen.add(normalized)
-        filtered.append(_normalize_multiline_text(segment))
+        filtered.append(_normalize_multiline_text(normalized))
     return filtered
 
 
@@ -115,22 +176,35 @@ def _ordered_unique_segments(segments: list[str]) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
     for segment in segments:
-        normalized = normalize_text_for_diff(segment)
+        normalized = _strip_meta_text(segment)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        ordered.append(_normalize_multiline_text(segment))
+        ordered.append(_normalize_multiline_text(normalized))
     return ordered
 
 
+def _merge_answer_candidates(*candidate_groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in candidate_groups:
+        for segment in group:
+            normalized = _strip_meta_text(segment)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(_normalize_multiline_text(normalized))
+    return merged
+
+
 def _remove_question_echo_segments(segments: list[str], question: str = "") -> list[str]:
-    question_norm = normalize_text_for_diff(question).lower()
+    question_norm = _strip_meta_text(question).lower()
     if not question_norm:
         return segments
 
     filtered: list[str] = []
     for segment in segments:
-        normalized = normalize_text_for_diff(segment).lower()
+        normalized = _strip_meta_text(segment).lower()
         if not normalized:
             continue
         if normalized == question_norm:
@@ -211,7 +285,7 @@ def extract_clean_text_from_message_node(node: dict[str, Any]) -> str:
     best_text = ""
     best_score = -10**9
     for option in options:
-        normalized = normalize_text_for_diff(option)
+        normalized = _strip_meta_text(option)
         if not normalized or is_static_ui_text(normalized):
             continue
         score = len(normalized)
@@ -221,11 +295,13 @@ def extract_clean_text_from_message_node(node: dict[str, Any]) -> str:
             score += 8
         if len(normalized) <= 8:
             score -= 12
+        if _contains_embedded_static_ui_text(normalized):
+            score -= 20
         if best_text and normalized in normalize_text_for_diff(best_text):
             continue
         if score >= best_score:
             best_score = score
-            best_text = _normalize_multiline_text(option)
+            best_text = _normalize_multiline_text(normalized)
     return best_text
 
 
@@ -340,17 +416,28 @@ def choose_best_answer_segment(segments: list[str]) -> str:
     best_text = ""
     best_score = -10**9
     for index, segment in enumerate(filtered):
-        normalized = normalize_text_for_diff(segment)
+        normalized = _strip_meta_text(segment)
+        if not normalized:
+            continue
+        sentence_like_count = sum(normalized.count(marker) for marker in (". ", "다. ", "요. ", "니다. "))
         score = len(normalized) + (index * 2)
         if len(normalized.split()) >= 5:
             score += 8
         if "\n" in segment:
             score += 10
+        if len(normalized) >= 40:
+            score += 10
+        if sentence_like_count >= 1:
+            score += 10
         if normalized.endswith((".", "다", "요", "니다")):
             score += 4
+        if normalized.endswith("?"):
+            score -= 30
+        if len(normalized) <= 40 and normalized.endswith("?"):
+            score -= 20
         if score >= best_score:
             best_score = score
-            best_text = _normalize_multiline_text(segment)
+            best_text = _normalize_multiline_text(normalized)
     return best_text
 
 
@@ -410,11 +497,11 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
         )
     )
 
+    all_candidates = _merge_answer_candidates(strict_candidates, fallback_candidates)
+
     answer = ""
-    if strict_candidates:
-        answer = strict_candidates[-1]
-    elif fallback_candidates:
-        answer = choose_best_answer_segment(fallback_candidates)
+    if all_candidates:
+        answer = choose_best_answer_segment(all_candidates)
 
     return {
         "answer": answer,
@@ -431,6 +518,7 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
         "diff_segments": diff_segments,
         "strict_candidates": strict_candidates,
         "fallback_candidates": fallback_candidates,
+        "all_candidates": all_candidates,
     }
 
 
@@ -550,5 +638,6 @@ def extract_dom_payload(chat_context: ResolvedChatContext, fragment_path: Path |
         "bot_count_increased": candidate_data["bot_count_increased"],
         "strict_candidates": candidate_data["strict_candidates"],
         "fallback_candidates": candidate_data["fallback_candidates"],
+        "all_candidates": candidate_data["all_candidates"],
         "html_fragment_path": html_fragment_path,
     }

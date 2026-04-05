@@ -64,6 +64,14 @@ class ExtractedPair:
     input_failure_reason: str = ""
     input_candidate_score: float = 0.0
     top_candidate_disabled: bool = False
+    top_candidate_placeholder: str = ""
+    top_candidate_aria: str = ""
+    input_ready_wait_result: str = ""
+    transition_wait_attempted: bool = False
+    transition_ready: bool = False
+    transition_timeout: bool = False
+    transition_reason: str = ""
+    transition_history: str = ""
     activation_attempted: bool = False
     activation_steps_tried: str = ""
     editable_candidates_count: int = 0
@@ -171,6 +179,14 @@ class RunResult:
             "input_failure_category": self.pair.input_failure_category,
             "input_failure_reason": self.pair.input_failure_reason,
             "top_candidate_disabled": self.pair.top_candidate_disabled,
+            "top_candidate_placeholder": self.pair.top_candidate_placeholder,
+            "top_candidate_aria": self.pair.top_candidate_aria,
+            "input_ready_wait_result": self.pair.input_ready_wait_result,
+            "transition_wait_attempted": self.pair.transition_wait_attempted,
+            "transition_ready": self.pair.transition_ready,
+            "transition_timeout": self.pair.transition_timeout,
+            "transition_reason": self.pair.transition_reason,
+            "transition_history": self.pair.transition_history,
             "activation_attempted": self.pair.activation_attempted,
             "activation_steps_tried": self.pair.activation_steps_tried,
             "editable_candidates_count": self.pair.editable_candidates_count,

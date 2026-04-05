@@ -1,10 +1,12 @@
 .env
+.secrets/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .venv/
 venv/
+*storage_state*.json
 artifacts/fullpage/*.png
 artifacts/chatbox/*.png
 artifacts/chatbox/*.html

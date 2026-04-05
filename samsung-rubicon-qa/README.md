@@ -111,6 +111,64 @@ cp .env.example .env
 
 필수 값은 OPENAI_API_KEY 다.
 
+## Codespaces 삼성 로그인 세션 저장
+
+로컬 브라우저를 쓰지 않고 Codespaces 안에서 보이는 원격 데스크톱 브라우저로 삼성계정 로그인을 끝낸 뒤, Playwright storage state를 저장할 수 있다.
+
+### 1. 원격 브라우저 데스크톱 시작
+
+```bash
+cd samsung-rubicon-qa
+bash scripts/start_vnc_browser.sh
+```
+
+스크립트는 아래 구성요소를 준비하거나 실행한다.
+
+- Xvfb
+- fluxbox
+- x11vnc
+- noVNC
+- websockify
+
+기본 포트는 아래와 같다.
+
+- noVNC: 6080
+- VNC: 5900
+- DISPLAY: :99
+
+Codespaces 포트 6080 을 브라우저에서 열면 원격 데스크톱 화면이 보인다.
+
+### 2. 로그인 대기용 Playwright 브라우저 실행
+
+다른 터미널에서 아래를 실행한다.
+
+```bash
+cd samsung-rubicon-qa
+python scripts/login_samsung.py
+```
+
+이 스크립트는 headless=False Chromium 을 띄우고 삼성닷컴 첫 화면으로 이동한다. DISPLAY 는 start_vnc_browser.sh 와 동일한 :99 를 사용하므로 noVNC 화면에서 실제 브라우저 창을 볼 수 있다.
+
+### 3. 원격 화면에서 로그인 완료
+
+1. Codespaces 포트 6080 의 noVNC 화면을 연다.
+2. 보이는 Chromium 창에서 삼성계정 로그인을 직접 완료한다.
+3. 로그인 완료 후 login_samsung.py 를 실행한 터미널에서 Enter 를 누르거나 아래 신호 파일을 만든다.
+
+```bash
+touch .secrets/login_complete.signal
+```
+
+완료되면 아래 파일이 저장된다.
+
+- .secrets/samsung_storage_state.json
+
+이 파일은 gitignore 에 포함되어 저장소에 올라가지 않는다.
+
+### 4. 자동 실행에서 세션 사용
+
+이후 python run.py 를 실행하면 앱은 .secrets/samsung_storage_state.json 이 있는지 확인하고, 있으면 Playwright context 생성 시 storage_state 로 자동 로드한다.
+
 ## 실행 방법
 
 ```bash

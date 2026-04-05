@@ -66,6 +66,14 @@ class AppConfig:
         return self.project_root / "reports"
 
     @property
+    def secrets_dir(self) -> Path:
+        return self.project_root / ".secrets"
+
+    @property
+    def samsung_storage_state_path(self) -> Path:
+        return self.secrets_dir / "samsung_storage_state.json"
+
+    @property
     def questions_csv_path(self) -> Path:
         return self.project_root / "testcases" / "questions.csv"
 
@@ -83,6 +91,7 @@ class AppConfig:
             self.video_dir,
             self.trace_dir,
             self.reports_dir,
+            self.secrets_dir,
         ]:
             path.mkdir(parents=True, exist_ok=True)
 

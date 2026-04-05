@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from app.samsung_rubicon import _candidate_is_disabled_like, _grade_candidate_state, _score_ranked_candidate
+from app.samsung_rubicon import (
+    _candidate_debug_line,
+    _candidate_is_disabled_like,
+    _candidate_has_ready_hint,
+    _grade_candidate_state,
+    _is_ready_composer_candidate,
+    _is_transition_disabled_candidate,
+    _score_ranked_candidate,
+)
 
 
 def _candidate(**overrides):
@@ -67,3 +75,55 @@ def test_placeholder_shell_is_treated_as_disabled_like_evidence():
     assert grade == "C"
     assert reason == "placeholder_shell"
     assert _candidate_is_disabled_like({"grade": grade, "reason": reason, "disabled": False}) is True
+
+
+def test_transition_disabled_candidate_detected_from_placeholder():
+    candidate = _candidate(
+        disabled=True,
+        editable=False,
+        tag_name="textarea",
+        placeholder="대화창에 더이상 입력할 수 없습니다.",
+        aria_label="대화창에 더이상 입력할 수 없습니다.",
+    )
+    assert _is_transition_disabled_candidate(candidate) is True
+
+
+def test_ready_composer_candidate_detected_from_ready_placeholder():
+    candidate = _candidate(
+        disabled=False,
+        editable=True,
+        tag_name="textarea",
+        placeholder="무엇이든지 물어 보세요",
+    )
+    assert _is_ready_composer_candidate(candidate) is True
+
+
+def test_ready_hint_detected_from_chat_message_aria():
+    candidate = _candidate(
+        disabled=False,
+        editable=False,
+        tag_name="div",
+        aria_label="대화 중 메시지",
+    )
+    grade, reason = _grade_candidate_state(candidate)
+    assert _candidate_has_ready_hint(candidate) is True
+    assert _is_ready_composer_candidate(candidate) is True
+    assert grade == "B"
+    assert reason == "ready_signal"
+
+
+def test_candidate_debug_line_tolerates_missing_grade_and_reason():
+    candidate = {
+        "score": 104.7,
+        "selector": "textarea",
+        "scope_name": "spr-chat__box-frame",
+        "visible": True,
+        "editable": True,
+        "disabled": False,
+    }
+
+    debug_line = _candidate_debug_line(candidate)
+
+    assert "selector=textarea" in debug_line
+    assert "grade=?" in debug_line
+    assert "reason=?" in debug_line

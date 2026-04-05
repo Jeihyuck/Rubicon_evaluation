@@ -43,6 +43,8 @@ class TestAppConfigPaths:
         assert config.video_dir == tmp_path / "artifacts" / "video"
         assert config.trace_dir == tmp_path / "artifacts" / "trace"
         assert config.reports_dir == tmp_path / "reports"
+        assert config.secrets_dir == tmp_path / ".secrets"
+        assert config.samsung_storage_state_path == tmp_path / ".secrets" / "samsung_storage_state.json"
         assert config.questions_csv_path == tmp_path / "testcases" / "questions.csv"
         assert config.runtime_log_path == tmp_path / "reports" / "runtime.log"
 
@@ -76,6 +78,7 @@ class TestAppConfigPaths:
         assert config.video_dir.is_dir()
         assert config.trace_dir.is_dir()
         assert config.reports_dir.is_dir()
+        assert config.secrets_dir.is_dir()
 
 
 class TestLoadConfig:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,33 +47,32 @@ INPUT_CANDIDATES = [
     {"type": "label", "value": compile_regex(r"질문|문의|메시지|채팅|입력|message|chat")},
     {"type": "placeholder", "value": compile_regex(r"질문|문의|메시지|무엇을 도와|message|ask")},
     {"type": "css", "value": "textarea[placeholder*='메시지'], textarea[aria-label*='메시지'], textarea[placeholder*='message' i], textarea[aria-label*='message' i]"},
-    {"type": "css", "value": ".ql-editor, .DraftEditor-root [contenteditable='true']"},
-    {"type": "css", "value": "[placeholder*='질문' i], [placeholder*='입력' i], [placeholder*='메시지' i]"},
-    {"type": "css", "value": "[aria-label*='질문' i], [aria-label*='입력' i], [aria-label*='메시지' i]"},
-    {"type": "css", "value": "textarea, input[type='text'], input[type='search'], input:not([type]), [role='textbox'], [contenteditable='true'], div[contenteditable]"},
+    {"type": "css", "value": ".ql-editor, .ql-container, .DraftEditor-root [contenteditable='true']"},
+    {"type": "css", "value": "[placeholder*='무엇이든지' i], [placeholder*='질문' i], [placeholder*='입력' i], [placeholder*='메시지' i]"},
+    {"type": "css", "value": "[aria-label*='무엇이든지' i], [aria-label*='대화 중 메시지' i], [aria-label*='질문' i], [aria-label*='입력' i], [aria-label*='메시지' i]"},
+    {"type": "css", "value": "textarea, [role='textbox'], [contenteditable='true'], div[contenteditable]"},
 ]
 
 INPUT_SCAN_SELECTORS = [
     ".ql-editor",
+    ".ql-container",
     ".DraftEditor-root [contenteditable='true']",
+    "[placeholder*='무엇이든지' i]",
     "[placeholder*='질문' i]",
     "[placeholder*='입력' i]",
     "[placeholder*='메시지' i]",
+    "[aria-label*='무엇이든지' i]",
+    "[aria-label*='대화 중 메시지' i]",
     "[aria-label*='질문' i]",
     "[aria-label*='입력' i]",
     "[aria-label*='메시지' i]",
     "textarea",
-    "input[type='text']",
-    "input[type='search']",
-    "input:not([type])",
     "[role='textbox']",
     "[contenteditable='true']",
     "[contenteditable='plaintext-only']",
     "div[contenteditable]",
     "textarea[placeholder]",
     "textarea[aria-label]",
-    "input[placeholder]",
-    "input[aria-label]",
     "[contenteditable][aria-label]",
 ]
 
@@ -165,12 +165,58 @@ BASELINE_MENU_TEXTS = [
     "서비스 센터",
     "FAQ",
 ]
+LOGIN_REQUIRED_HINTS = [
+    "로그인 / 회원가입",
+    "로그인하세요",
+    "회원가입",
+    "Samsung AI Assistant에 로그인",
+]
 
 CAPTURE_INVALID_REASON = "Capture invalid: no verified submitted question and bot answer pair"
 CAPTURE_INVALID_FIX = "Check before_send/after_send screenshots, frame selection, and message diff logs"
 MIN_INPUT_WIDTH = 24
 MIN_INPUT_HEIGHT = 18
 UNAVAILABLE_AVAILABILITY_VALUES = {"unavailable", "offline", "hidden", "closed"}
+CHAT_READY_HINTS = [
+    "무엇이든 물어보세요",
+    "무엇이든 물어 보세요",
+    "메시지를 입력",
+    "질문을 입력",
+]
+CHAT_READY_SIGNAL_HINTS = [
+    "대화 중 메시지",
+]
+CHAT_DISABLED_HINTS = [
+    "대화창에 더이상 입력할 수 없습니다",
+    "더이상 입력할 수 없습니다",
+]
+FAST_TRANSITION_FRAME_HINTS = [
+    "spr-chat__box-frame",
+    "spr-live-chat-frame",
+]
+CHAT_READY_TIMEOUT_SEC = 20.0
+CHAT_READY_POLL_MS = 400
+COMPOSER_TRANSITION_STABLE_ROUNDS = 2
+ACTIVATION_MAX_ROUNDS = 2
+ACTIVATION_POLL_MS = 600
+POPUP_SCAN_TIMEOUT_SEC = 6.0
+POPUP_LOCATOR_TIMEOUT_MS = 250
+CHAT_READY_SCAN_SELECTORS = [
+    "textarea",
+    "textarea[placeholder]",
+    "textarea[aria-label]",
+    "[role='textbox']",
+    "[contenteditable='true']",
+    "[contenteditable='plaintext-only']",
+]
+CHAT_INPUT_ROOT_SELECTORS = [
+    "footer",
+    "form",
+    "[class*='footer' i]",
+    "[class*='composer' i]",
+    "[class*='input' i]",
+    "[class*='textarea' i]",
+]
 
 
 @dataclass(slots=True)
@@ -184,6 +230,15 @@ class SubmissionEvidence:
     input_selector: str
     input_candidate_score: float
     top_candidate_disabled: bool
+    top_candidate_placeholder: str
+    top_candidate_aria: str
+    input_ready_wait_attempted: bool
+    input_ready_wait_result: str
+    transition_wait_attempted: bool
+    transition_ready: bool
+    transition_timeout: bool
+    transition_reason: str
+    transition_history: str
     failover_attempts: int
     final_input_value_verified: bool
     user_message_echo_verified: bool
@@ -252,8 +307,44 @@ def _iter_scopes(page: Page) -> list[tuple[str, Page | Frame]]:
     return scopes
 
 
+def _iter_popup_scopes(page: Page) -> list[tuple[str, Page | Frame]]:
+    prioritized: list[tuple[str, Page | Frame]] = [("page", page)]
+    secondary: list[tuple[str, Page | Frame]] = []
+    for index, frame in enumerate(page.frames):
+        frame_name = frame.name or ""
+        frame_url = frame.url or ""
+        frame_label = frame_name or frame_url or f"frame-{index}"
+        frame_hint = f"{frame_name} {frame_url}".lower()
+        if any(keyword in frame_hint for keyword in ("spr", "chat", "popup", "consent", "notice", "layer", "dialog")):
+            prioritized.append((frame_label, frame))
+        else:
+            secondary.append((frame_label, frame))
+    return prioritized + secondary[:2]
+
+
+def _first_quick_visible_locator(
+    scope: Page | Frame,
+    candidates: list[dict[str, Any]],
+    timeout_ms: int = POPUP_LOCATOR_TIMEOUT_MS,
+) -> tuple[Locator | None, dict[str, Any] | None]:
+    for candidate in candidates:
+        locator = build_locator(scope, candidate).first
+        try:
+            if locator.is_visible(timeout=timeout_ms):
+                return locator, candidate
+        except Exception:
+            continue
+    return None, None
+
+
 def _bool_attr(value: Any) -> bool:
     return str(value or "").strip().lower() == "true"
+
+
+def _norm_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return " ".join(str(value).strip().split())
 
 
 def _candidate_size_ok(candidate_state: dict[str, Any]) -> bool:
@@ -316,10 +407,11 @@ def _score_ranked_candidate(candidate_state: dict[str, Any], grade: str, preferr
 
 
 def _candidate_debug_line(candidate: dict[str, Any]) -> str:
+    score = float(candidate.get("score", 0.0) or 0.0)
     return (
-        f"score={candidate['score']:.1f} selector={candidate['selector']} scope={candidate['scope_name']} "
-        f"visible={candidate['visible']} editable={candidate['editable']} disabled={candidate['disabled']} "
-        f"grade={candidate['grade']} reason={candidate['reason']}"
+        f"score={score:.1f} selector={candidate.get('selector', '?')} scope={candidate.get('scope_name', '?')} "
+        f"visible={candidate.get('visible', '?')} editable={candidate.get('editable', '?')} disabled={candidate.get('disabled', '?')} "
+        f"grade={candidate.get('grade', '?')} reason={candidate.get('reason', '?')}"
     )
 
 
@@ -337,6 +429,64 @@ def _candidate_is_disabled_like(candidate: dict[str, Any] | None) -> bool:
         "placeholder_shell",
         "not_editable",
     }
+
+
+def _is_disabled_transition_candidate(candidate: dict[str, Any]) -> bool:
+    placeholder = _norm_text(candidate.get("placeholder"))
+    aria = _norm_text(candidate.get("aria_label") or candidate.get("aria"))
+    combined = f"{placeholder} {aria}".strip()
+
+    if not candidate.get("visible", False):
+        return False
+    if not candidate.get("disabled", False):
+        return False
+    if candidate.get("tag_name") not in ("textarea", "input", "div"):
+        return False
+    return any(hint in combined for hint in CHAT_DISABLED_HINTS)
+
+
+def _is_ready_candidate(candidate: dict[str, Any]) -> bool:
+    placeholder = _norm_text(candidate.get("placeholder"))
+    aria = _norm_text(candidate.get("aria_label") or candidate.get("aria"))
+    combined = f"{placeholder} {aria}".strip()
+
+    if not candidate.get("visible", False):
+        return False
+    if candidate.get("disabled", False):
+        return False
+    if candidate.get("editable", False):
+        return True
+    return any(hint in combined for hint in CHAT_READY_HINTS)
+
+
+def _candidate_has_ready_hint(candidate: dict[str, Any]) -> bool:
+    placeholder = _norm_text(candidate.get("placeholder"))
+    aria = _norm_text(candidate.get("aria_label") or candidate.get("aria"))
+    combined = f"{placeholder} {aria}".strip()
+    return any(hint in combined for hint in [*CHAT_READY_HINTS, *CHAT_READY_SIGNAL_HINTS])
+
+
+def _is_transition_disabled_candidate(candidate: dict[str, Any]) -> bool:
+    return _is_disabled_transition_candidate(candidate)
+
+
+def _is_ready_composer_candidate(candidate: dict[str, Any]) -> bool:
+    return _is_ready_candidate(candidate)
+
+
+def _top_candidate_texts(ranked_candidates: list[dict[str, Any]]) -> tuple[str, str]:
+    top = ranked_candidates[0] if ranked_candidates else None
+    if not top:
+        return "", ""
+    return _norm_text(top.get("placeholder")), _norm_text(top.get("aria_label") or top.get("aria"))
+
+
+def _candidate_bottom_weight(candidate: dict[str, Any]) -> int:
+    rect_top = int(candidate.get("rectTop", candidate.get("bbox_top", 0)) or 0)
+    viewport_height = int(candidate.get("viewportHeight", 0) or 0)
+    if viewport_height and rect_top > int(viewport_height * 0.45):
+        return 6
+    return 0
 
 
 def _locator_count(scope: Page | Frame, selector: str) -> int:
@@ -407,7 +557,281 @@ def _inspect_candidate(locator: Locator) -> dict[str, Any]:
     except Exception:
         pass
     payload["editable"] = bool(payload["editable"]) and not bool(payload["disabled"]) and not bool(payload["readonly"]) and not bool(payload["aria_disabled"]) and not bool(payload["aria_readonly"])
+    payload["aria"] = payload.get("aria_label", "")
     return payload
+
+
+def _assign_candidate_to_context(ctx: ResolvedChatContext, candidate: dict[str, Any]) -> None:
+    candidate_scope = candidate.get("scope", ctx.scope)
+    candidate_scope_name = candidate.get("scope_name", ctx.scope_name)
+    ctx.scope = candidate_scope
+    ctx.scope_name = candidate_scope_name
+    ctx.input_locator = candidate.get("locator")
+    ctx.input_scope = candidate_scope
+    ctx.input_scope_name = candidate_scope_name
+    ctx.input_selector = candidate.get("selector", "")
+    ctx.input_candidate_score = float(candidate.get("score", 0.0) or 0.0)
+    ctx.input_failure_category = candidate.get("failure_category", "")
+    ctx.input_failure_reason = candidate.get("failure_reason", "")
+    send_locator, _ = first_visible_locator(candidate_scope, SEND_BUTTON_CANDIDATES, timeout_ms=700)
+    if send_locator is None and ctx.page is not None:
+        send_locator, _ = first_visible_locator(ctx.page, SEND_BUTTON_CANDIDATES, timeout_ms=700)
+    ctx.send_locator = send_locator
+    container_locator, _ = first_visible_locator(candidate_scope, CONTAINER_CANDIDATES, timeout_ms=700)
+    if container_locator is not None:
+        ctx.container_locator = container_locator
+
+
+def _iter_fast_transition_contexts(page: Page, resolved_ctx: ResolvedChatContext | None) -> list[tuple[str, Any]]:
+    contexts: list[tuple[str, Any]] = []
+    if resolved_ctx is not None:
+        contexts.append(("resolved_ctx", resolved_ctx.scope))
+
+    for index, frame in enumerate(page.frames):
+        frame_url = ""
+        frame_name = ""
+        try:
+            frame_url = frame.url or ""
+        except Exception:
+            pass
+        try:
+            frame_name = frame.name or ""
+        except Exception:
+            pass
+        frame_sig = f"{frame_name} {frame_url}"
+        if any(hint in frame_sig for hint in FAST_TRANSITION_FRAME_HINTS):
+            contexts.append((f"fast_frame[{index}]", frame))
+
+    deduped: list[tuple[str, Any]] = []
+    seen: set[int] = set()
+    for label, current_ctx in contexts:
+        key = id(current_ctx)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((label, current_ctx))
+    return deduped
+
+
+def _collect_lightweight_candidates(ctx: Any, scope_label: str) -> list[dict[str, Any]]:
+    selectors = [
+        ".ql-editor",
+        ".ql-container",
+        "[placeholder*='무엇이든지' i]",
+        "[placeholder*='입력' i]",
+        "[aria-label*='무엇이든지' i]",
+        "[aria-label*='대화 중 메시지' i]",
+        "[aria-label*='입력' i]",
+        "[aria-label*='메시지' i]",
+        "textarea",
+        "textarea[placeholder]",
+        "textarea[aria-label]",
+        "[contenteditable='true']",
+        "[contenteditable='plaintext-only']",
+        "[role='textbox']",
+    ]
+    scope = ctx.scope if isinstance(ctx, ResolvedChatContext) else ctx
+    items: list[dict[str, Any]] = []
+    for selector in selectors:
+        try:
+            locs = scope.locator(selector)
+            count = min(locs.count(), 3)
+        except Exception:
+            continue
+        for index in range(count):
+            try:
+                loc = locs.nth(index)
+                state = _inspect_candidate(loc)
+                grade, reason = _grade_candidate_state(state)
+                items.append(
+                    {
+                        **state,
+                        "aria": state.get("aria_label", ""),
+                        "selector": selector,
+                        "scope_name": scope_label,
+                        "scope": scope,
+                        "locator": loc,
+                        "index": index,
+                        "grade": grade,
+                        "reason": reason,
+                        "score": _score_ranked_candidate(state, grade, scope_label, scope_label),
+                    }
+                )
+                if _candidate_has_ready_hint(items[-1]) and not items[-1].get("editable", False):
+                    items.extend(_collect_related_ready_candidates(loc, scope, scope_label))
+            except Exception:
+                continue
+    return items
+
+
+def _collect_related_ready_candidates(locator: Locator, scope: Any, scope_label: str) -> list[dict[str, Any]]:
+    related_selectors = [
+        ".ql-editor",
+        ".DraftEditor-root [contenteditable='true']",
+        "textarea",
+        "textarea[placeholder]",
+        "textarea[aria-label]",
+        "input[type='text']",
+        "input[type='search']",
+        "[contenteditable='true']",
+        "[contenteditable='plaintext-only']",
+        "[role='textbox']",
+    ]
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    containers = [locator]
+    try:
+        containers.append(locator.locator("xpath=ancestor-or-self::*[1]"))
+    except Exception:
+        pass
+    try:
+        containers.append(locator.locator("xpath=ancestor::*[self::div or self::form or self::section][1]"))
+    except Exception:
+        pass
+    for container in containers:
+        for selector in related_selectors:
+            try:
+                related = container.locator(selector)
+                count = min(related.count(), 3)
+            except Exception:
+                continue
+            for index in range(count):
+                key = (selector, index)
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    current = related.nth(index)
+                    state = _inspect_candidate(current)
+                    grade, reason = _grade_candidate_state(state)
+                    items.append(
+                        {
+                            **state,
+                            "aria": state.get("aria_label", ""),
+                            "selector": selector,
+                            "scope_name": scope_label,
+                            "scope": scope,
+                            "locator": current,
+                            "index": index,
+                            "grade": grade,
+                            "reason": reason,
+                            "score": _score_ranked_candidate(state, grade, scope_label, scope_label),
+                        }
+                    )
+                except Exception:
+                    continue
+    return items
+
+
+def _resolve_focus_proxy_candidate(scope: Page | Frame, anchor_locator: Locator, logger: Any) -> tuple[Locator | None, str]:
+    selectors = [
+        ".ql-editor:focus",
+        "textarea:focus",
+        "input:focus",
+        "[role='textbox']:focus",
+        "[contenteditable='true']:focus",
+        "[contenteditable='plaintext-only']:focus",
+        ".ql-editor:focus-within",
+        "[role='textbox']:focus-within",
+        "[contenteditable='true']:focus-within",
+        "[contenteditable='plaintext-only']:focus-within",
+        ".ql-editor",
+        "[contenteditable='true']",
+        "[contenteditable='plaintext-only']",
+        "textarea",
+        "input[type='text']",
+        "input[type='search']",
+        "[role='textbox']",
+    ]
+
+    try:
+        active_snapshot = scope.evaluate(
+            """
+            () => {
+              const el = document.activeElement;
+              if (!el) return null;
+              const rect = el.getBoundingClientRect();
+              return {
+                tag: (el.tagName || '').toLowerCase(),
+                role: (el.getAttribute('role') || '').toLowerCase(),
+                placeholder: (el.getAttribute('placeholder') || '').trim(),
+                aria: (el.getAttribute('aria-label') || '').trim(),
+                contenteditable: (el.getAttribute('contenteditable') || el.contentEditable || '').toLowerCase(),
+                disabled: !!el.disabled || (el.getAttribute('aria-disabled') || '').toLowerCase() === 'true',
+                readonly: !!el.readOnly || (el.getAttribute('aria-readonly') || '').toLowerCase() === 'true',
+                rect: [Math.round(rect.left || 0), Math.round(rect.top || 0), Math.round(rect.width || 0), Math.round(rect.height || 0)],
+              };
+            }
+            """
+        )
+        logger.info("[INPUT][FOCUS_PROXY] active=%s", active_snapshot)
+    except Exception as exc:
+        logger.debug("[INPUT][FOCUS_PROXY] active snapshot failed: %s", exc)
+
+    related_candidates = _collect_related_ready_candidates(anchor_locator, scope, "focus_proxy")
+    for candidate in related_candidates:
+        logger.info("[INPUT][FOCUS_PROXY] related selector=%s visible=%s editable=%s disabled=%s grade=%s reason=%s",
+                    candidate.get("selector"), candidate.get("visible"), candidate.get("editable"), candidate.get("disabled"), candidate.get("grade"), candidate.get("reason"))
+        if candidate.get("grade") in {"A", "B"} and not candidate.get("disabled", False):
+            return candidate.get("locator"), str(candidate.get("selector") or "related")
+
+    for selector in selectors:
+        try:
+            locators = scope.locator(selector)
+            count = min(locators.count(), 3)
+        except Exception:
+            continue
+        for index in range(count):
+            try:
+                current = locators.nth(index)
+                state = _inspect_candidate(current)
+                grade, reason = _grade_candidate_state(state)
+                logger.info(
+                    "[INPUT][FOCUS_PROXY] selector=%s index=%s visible=%s editable=%s disabled=%s grade=%s reason=%s placeholder=%r aria=%r",
+                    selector,
+                    index,
+                    state.get("visible"),
+                    state.get("editable"),
+                    state.get("disabled"),
+                    grade,
+                    reason,
+                    _norm_text(state.get("placeholder")),
+                    _norm_text(state.get("aria_label") or state.get("aria")),
+                )
+                if grade in {"A", "B"} and not state.get("disabled", False):
+                    return current, selector
+            except Exception:
+                continue
+    return None, ""
+
+
+def wait_for_composer_transition(
+    page: Page,
+    resolved_ctx: ResolvedChatContext | None,
+    case_id: str,
+    config: AppConfig,
+) -> dict[str, Any]:
+    if resolved_ctx is None:
+        return {
+            "transition_ready": False,
+            "transition_timeout": True,
+            "transition_reason": "composer_transition_timeout",
+            "transition_history": [],
+            "ready_scope": "",
+            "ready_candidate": None,
+            "ready_ctx": None,
+        }
+
+    result = wait_until_chat_input_ready(page, resolved_ctx, case_id, config)
+    return {
+        "transition_ready": bool(result.get("ready", False)),
+        "transition_timeout": bool(result.get("timeout", False)),
+        "transition_reason": "composer_became_ready" if result.get("ready") else "composer_transition_timeout",
+        "transition_history": result.get("history", []),
+        "ready_scope": str(result.get("scope_name", "") or resolved_ctx.scope_name),
+        "ready_candidate": result.get("candidate"),
+        "ready_ctx": resolved_ctx,
+    }
 
 
 def _input_candidate_snapshot(locator: Locator) -> dict[str, Any]:
@@ -513,6 +937,232 @@ def _score_input_candidate_metadata(metadata: dict[str, Any], preferred_scope: s
         score += 3
 
     return score
+
+
+def _is_excluded_non_chat_candidate(metadata: dict[str, Any]) -> bool:
+    combined = _norm_text(
+        f"{metadata.get('placeholder', '')} {metadata.get('ariaLabel', '')} {metadata.get('textPreview', '')}"
+    ).lower()
+    return any(
+        hint in combined
+        for hint in [
+            "궁금한 제품을 찾아보세요",
+            "검색어를 입력",
+            "search",
+        ]
+    )
+
+
+def _iter_chat_input_roots(context: ResolvedChatContext) -> list[tuple[str, Locator]]:
+    roots: list[tuple[str, Locator]] = []
+    seen: set[str] = set()
+
+    def add_root(label: str, locator: Locator) -> None:
+        if label in seen:
+            return
+        try:
+            if not locator.is_visible(timeout=300):
+                return
+        except Exception:
+            return
+        seen.add(label)
+        roots.append((label, locator))
+
+    if context.container_locator is not None:
+        add_root("chat_container", context.container_locator)
+        for selector in CHAT_INPUT_ROOT_SELECTORS:
+            try:
+                locator = context.container_locator.locator(selector)
+                count = min(locator.count(), 3)
+            except Exception:
+                continue
+            for index in range(count):
+                add_root(f"container:{selector}:{index}", locator.nth(index))
+
+    if context.input_locator is not None:
+        for xpath in [
+            "xpath=ancestor-or-self::*[self::footer or self::form][1]",
+            "xpath=ancestor-or-self::*[contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'footer') or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'composer') or contains(translate(@class, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'input')][1]",
+        ]:
+            try:
+                add_root(f"input_ancestor:{xpath}", context.input_locator.locator(xpath).first)
+            except Exception:
+                continue
+
+    if not roots:
+        for selector in CHAT_INPUT_ROOT_SELECTORS:
+            try:
+                locator = context.scope.locator(selector)
+                count = min(locator.count(), 3)
+            except Exception:
+                continue
+            for index in range(count):
+                add_root(f"scope:{selector}:{index}", locator.nth(index))
+
+    return roots
+
+
+def _collect_chat_input_candidates(context: ResolvedChatContext) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, int, int]] = set()
+    roots = _iter_chat_input_roots(context)
+
+    for root_label, root in roots:
+        for selector in CHAT_READY_SCAN_SELECTORS:
+            try:
+                locator = root.locator(selector)
+                count = min(locator.count(), 4)
+            except Exception:
+                continue
+            for index in range(count):
+                current = locator.nth(index)
+                metadata = _input_candidate_snapshot(current)
+                if not metadata or not metadata.get("visible"):
+                    continue
+                if _is_excluded_non_chat_candidate(metadata):
+                    continue
+                key = (
+                    root_label,
+                    str(metadata.get("tag", "")),
+                    str(metadata.get("placeholder", "")),
+                    int(metadata.get("rectTop", 0) or 0),
+                    int(metadata.get("rectLeft", 0) or 0),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                placeholder = _norm_text(metadata.get("placeholder"))
+                aria_label = _norm_text(metadata.get("ariaLabel"))
+                candidate = {
+                    "locator": current,
+                    "scope": context.scope,
+                    "scope_name": context.scope_name,
+                    "selector": selector,
+                    "root_label": root_label,
+                    "visible": bool(metadata.get("visible")),
+                    "enabled": not bool(metadata.get("disabled")),
+                    "editable": bool(metadata.get("editable")),
+                    "disabled": bool(metadata.get("disabled")),
+                    "readonly": bool(metadata.get("readOnly")),
+                    "aria_disabled": False,
+                    "aria_readonly": False,
+                    "placeholder": placeholder,
+                    "aria_label": aria_label,
+                    "aria": aria_label,
+                    "tag_name": str(metadata.get("tag", "")).lower(),
+                    "role": str(metadata.get("role", "")).lower(),
+                    "contenteditable": str(metadata.get("contentEditable", "")).lower(),
+                    "bbox_width": int(metadata.get("rectWidth", 0) or 0),
+                    "bbox_height": int(metadata.get("rectHeight", 0) or 0),
+                    "rectTop": int(metadata.get("rectTop", 0) or 0),
+                    "viewportHeight": int(metadata.get("viewportHeight", 0) or 0),
+                    "footerLike": bool(metadata.get("footerLike")),
+                }
+                candidate["score"] = (
+                    (40 if candidate["editable"] else 0)
+                    + (18 if candidate["footerLike"] else 0)
+                    + (12 if any(hint in f"{placeholder} {aria_label}" for hint in CHAT_READY_HINTS) else 0)
+                    + _candidate_bottom_weight(candidate)
+                    + (4 if selector == "textarea" else 0)
+                    - (25 if candidate["disabled"] else 0)
+                )
+                candidates.append(candidate)
+
+    candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
+    return candidates
+
+
+def _history_entry(state: str, candidate: dict[str, Any] | None, started: float) -> dict[str, Any]:
+    return {
+        "ts": round(time.monotonic() - started, 2),
+        "state": state,
+        "selector": (candidate or {}).get("selector", ""),
+        "placeholder": _norm_text((candidate or {}).get("placeholder")),
+        "aria": _norm_text((candidate or {}).get("aria_label") or (candidate or {}).get("aria")),
+        "editable": bool((candidate or {}).get("editable", False)),
+        "disabled": bool((candidate or {}).get("disabled", False)),
+    }
+
+
+def wait_until_chat_input_ready(
+    page: Page,
+    ctx: ResolvedChatContext,
+    case_id: str,
+    config: AppConfig,
+) -> dict[str, Any]:
+    del case_id, config
+    runtime = _runtime()
+    runtime.logger.info(
+        "[CHAT_READY][START] timeout_sec=%s poll_ms=%s scope=%s",
+        CHAT_READY_TIMEOUT_SEC,
+        CHAT_READY_POLL_MS,
+        getattr(ctx, "scope_name", "resolved_ctx"),
+    )
+    started = time.monotonic()
+    history: list[dict[str, Any]] = []
+    last_state = ""
+
+    while (time.monotonic() - started) < CHAT_READY_TIMEOUT_SEC:
+        context_candidates: list[dict[str, Any]] = []
+        for scope_name, scope in _iter_fast_transition_contexts(page, ctx):
+            current_ctx = ctx if scope is getattr(ctx, "scope", None) else scope
+            current_candidates = _collect_lightweight_candidates(current_ctx, scope_name)
+            for candidate in current_candidates:
+                candidate.setdefault("scope_name", scope_name)
+                candidate.setdefault("scope", scope)
+            context_candidates.extend(current_candidates)
+
+        candidates = sorted(context_candidates, key=lambda item: item.get("score", 0), reverse=True)
+        ready_candidate = next((candidate for candidate in candidates if _is_ready_candidate(candidate)), None)
+        disabled_candidate = next((candidate for candidate in candidates if _is_disabled_transition_candidate(candidate)), None)
+
+        if ready_candidate is not None:
+            runtime.logger.info(
+                "[CHAT_READY][READY] selector=%s placeholder=%r aria=%r editable=%s",
+                ready_candidate.get("selector"),
+                ready_candidate.get("placeholder"),
+                ready_candidate.get("aria_label"),
+                ready_candidate.get("editable"),
+            )
+            if last_state != "ready":
+                history.append(_history_entry("ready", ready_candidate, started))
+            return {
+                "ready": True,
+                "timeout": False,
+                "scope": ready_candidate.get("scope", ctx.scope),
+                "scope_name": ready_candidate.get("scope_name", getattr(ctx, "scope_name", "resolved_ctx")),
+                "candidate": ready_candidate,
+                "history": history,
+                "result": "ready",
+            }
+
+        if disabled_candidate is not None:
+            runtime.logger.info(
+                "[CHAT_READY][WAITING_DISABLED] selector=%s placeholder=%r aria=%r",
+                disabled_candidate.get("selector"),
+                disabled_candidate.get("placeholder"),
+                disabled_candidate.get("aria_label"),
+            )
+            if last_state != "waiting_disabled":
+                history.append(_history_entry("waiting_disabled", disabled_candidate, started))
+                last_state = "waiting_disabled"
+        else:
+            if last_state != "waiting_other":
+                history.append(_history_entry("waiting_other", candidates[0] if candidates else None, started))
+                last_state = "waiting_other"
+
+        page.wait_for_timeout(CHAT_READY_POLL_MS)
+
+    runtime.logger.warning("[CHAT_READY][TIMEOUT]")
+    return {
+        "ready": False,
+        "timeout": True,
+        "scope": ctx.scope,
+        "scope_name": getattr(ctx, "scope_name", "resolved_ctx"),
+        "candidate": None,
+        "history": history,
+        "result": "timeout",
+    }
 
 
 def _classify_input_candidate_metadata(metadata: dict[str, Any]) -> tuple[str, str]:
@@ -695,7 +1345,10 @@ def open_chat_widget_or_conversation(page: Page) -> dict[str, Any]:
     runtime = _runtime()
     result = {"open_method": "failed", "open_ok": False, "open_error": ""}
     sdk_status = get_sprinklr_sdk_status(page)
-    methods: list[tuple[str, Any]] = []
+    methods: list[tuple[str, Any]] = [
+        ("ui_star_launcher", lambda: _click_preferred_rubicon_launcher(page)[0]),
+        ("ui_launcher_candidates", lambda: _click_selector_candidates(page, ["#spr-chat__trigger-button", *_SPR_CHAT_TRIGGER_CANDIDATES])),
+    ]
     if not runtime.config.rubicon_disable_sdk and sdk_status.get("has_sprchat"):
         methods.extend([
             ("sdk_open_new", lambda: page.evaluate("() => window.sprChat('openNewConversation')")),
@@ -793,22 +1446,12 @@ def _update_context_from_ranked_candidates(ctx: ResolvedChatContext, ranked_cand
         ctx.input_candidate_score = 0.0
         return
 
-    ctx.input_locator = preferred["locator"]
-    ctx.input_scope = preferred["scope"]
-    ctx.input_scope_name = preferred["scope_name"]
-    ctx.input_selector = preferred["selector"]
-    ctx.input_candidate_score = preferred["score"]
-    ctx.input_failure_category = preferred.get("failure_category", "")
-    ctx.input_failure_reason = preferred.get("failure_reason", "")
-    send_locator, _ = first_visible_locator(preferred["scope"], SEND_BUTTON_CANDIDATES, timeout_ms=700)
-    if send_locator is None:
-        send_locator, _ = first_visible_locator(ctx.scope, SEND_BUTTON_CANDIDATES, timeout_ms=700)
-    ctx.send_locator = send_locator
+    _assign_candidate_to_context(ctx, preferred)
 
 
-def collect_ranked_input_candidates(ctx: ResolvedChatContext, frame_label: str = "") -> list[dict[str, Any]]:
+def collect_ranked_input_candidates(ctx: ResolvedChatContext, frame_label: str = "", preferred_scope: str = "") -> list[dict[str, Any]]:
     ranked: list[dict[str, Any]] = []
-    preferred_scope = frame_label or ctx.scope_name or ctx.input_scope_name
+    preferred_scope_name = preferred_scope or frame_label or ctx.scope_name or ctx.input_scope_name
     seen: set[tuple[str, str, str, str, int, int]] = set()
     for scope_name, scope in _resolve_candidate_scope(ctx):
         if frame_label and scope_name != frame_label:
@@ -834,7 +1477,7 @@ def collect_ranked_input_candidates(ctx: ResolvedChatContext, frame_label: str =
                     continue
                 seen.add(key)
                 grade, reason = _grade_candidate_state(state)
-                score = _score_ranked_candidate(state, grade, preferred_scope, scope_name)
+                score = _score_ranked_candidate(state, grade, preferred_scope_name, scope_name)
                 candidate = {
                     "locator": current,
                     "scope": scope,
@@ -896,15 +1539,6 @@ def _activation_targets(page: Page, ctx: ResolvedChatContext) -> list[tuple[str,
             targets.append(("textarea_parent", ctx.input_locator.locator("xpath=parent::*").first))
         except Exception:
             pass
-    try:
-        targets.append(("placeholder_area", ctx.scope.locator("[placeholder], [aria-label]").first))
-    except Exception:
-        pass
-    for selector in _ACTIVATION_CANDIDATES:
-        try:
-            targets.append((selector, page.locator(selector).first))
-        except Exception:
-            continue
     return targets
 
 
@@ -913,44 +1547,40 @@ def ensure_composer_ready(page: Page, ctx: ResolvedChatContext) -> dict[str, Any
     runtime.logger.info("[SPR][ACTIVATION][START]")
     steps: list[str] = []
     latest_candidates: list[dict[str, Any]] = []
-    editable_count = 0
-    max_rounds = max(1, runtime.config.rubicon_frame_rescan_rounds)
 
-    for round_index in range(max_rounds):
-        latest_candidates = collect_ranked_input_candidates(ctx)
-        editable_count = sum(1 for candidate in latest_candidates if candidate["grade"] in {"A", "B"})
-        runtime.logger.info("[SPR][ACTIVATION][STATE] editable_candidates=%s", editable_count)
-        if editable_count > 0:
-            runtime.logger.info("[SPR][ACTIVATION][SUCCESS]")
-            return {
-                "activation_attempted": bool(steps),
-                "activation_steps": steps,
-                "activation_success": True,
-                "editable_candidates_after_activation": editable_count,
-            }
+    for round_index in range(ACTIVATION_MAX_ROUNDS):
         for target_name, locator in _activation_targets(page, ctx):
             step_name = f"round{round_index + 1}:{target_name}"
-            steps.append(step_name)
-            _activation_click(locator, step_name)
-            page.wait_for_timeout(500)
-            latest_candidates = collect_ranked_input_candidates(ctx)
-            editable_count = sum(1 for candidate in latest_candidates if candidate["grade"] in {"A", "B"})
-            runtime.logger.info("[SPR][ACTIVATION][STATE] editable_candidates=%s", editable_count)
-            if editable_count > 0:
+            try:
+                locator.click(timeout=2000)
+                steps.append(step_name)
+                runtime.logger.info("[SPR][ACTIVATION][CLICK] target=%s", step_name)
+            except Exception as exc:
+                runtime.logger.debug("[SPR][ACTIVATION][CLICK_FAIL] target=%s err=%s", step_name, exc)
+                continue
+            page.wait_for_timeout(ACTIVATION_POLL_MS)
+            ready_candidates: list[dict[str, Any]] = []
+            for scope_label, current_ctx in _iter_fast_transition_contexts(page, ctx):
+                latest_candidates = _collect_lightweight_candidates(current_ctx, f"activation_round_{round_index + 1}:{scope_label}")
+                ready_candidates.extend([candidate for candidate in latest_candidates if _is_ready_candidate(candidate)])
+            runtime.logger.info("[SPR][ACTIVATION][STATE] editable_candidates=%s", len(ready_candidates))
+            if ready_candidates:
+                _assign_candidate_to_context(ctx, ready_candidates[0])
                 runtime.logger.info("[SPR][ACTIVATION][SUCCESS]")
                 return {
                     "activation_attempted": True,
                     "activation_steps": steps,
                     "activation_success": True,
-                    "editable_candidates_after_activation": editable_count,
+                    "editable_candidates_after_activation": len(ready_candidates),
+                    "editable_candidates": ready_candidates,
                 }
-        page.wait_for_timeout(300)
-    runtime.logger.info("[SPR][ACTIVATION][EXHAUSTED]")
+    runtime.logger.warning("[SPR][ACTIVATION][EXHAUSTED]")
     return {
         "activation_attempted": bool(steps),
         "activation_steps": steps,
         "activation_success": False,
-        "editable_candidates_after_activation": editable_count,
+        "editable_candidates_after_activation": 0,
+        "editable_candidates": [],
     }
 
 
@@ -969,6 +1599,56 @@ def _sprinklr_launcher_present(page: Page) -> bool:
         return page.locator("#spr-chat__trigger-button, .spr-chat__trigger-box button, iframe[title='라이브챗']").count() > 0
     except Exception:
         return False
+
+
+def _click_preferred_rubicon_launcher(page: Page) -> tuple[bool, str]:
+        runtime = _runtime()
+        script = r"""
+() => {
+    const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (el) => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width >= 28 && rect.height >= 28;
+    };
+    const score = (el) => {
+        if (!isVisible(el)) return -9999;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        const attrs = normalize([
+            el.id,
+            el.className,
+            el.getAttribute('aria-label') || '',
+            el.getAttribute('title') || '',
+            el.innerText || el.textContent || '',
+        ].join(' ')).toLowerCase();
+        let total = 0;
+        if (attrs.includes('spr') || attrs.includes('chat') || attrs.includes('assistant') || attrs.includes('rubicon') || attrs.includes('루비콘') || attrs.includes('상담')) total += 18;
+        if (attrs.includes('별') || attrs.includes('star')) total += 8;
+        if (el.querySelector('svg')) total += 4;
+        if (rect.left > window.innerWidth * 0.6 && rect.top > window.innerHeight * 0.55) total += 16;
+        if ((style.position || '').includes('fixed') || (style.position || '').includes('sticky')) total += 10;
+        const radius = parseFloat(style.borderRadius || '0');
+        if (radius >= Math.min(rect.width, rect.height) / 3) total += 6;
+        if (rect.width >= 36 && rect.width <= 96 && rect.height >= 36 && rect.height <= 96) total += 5;
+        return total;
+    };
+    const best = Array.from(document.querySelectorAll('button, [role="button"], a, div[role="button"]'))
+        .map((el) => ({ el, score: score(el) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score)[0];
+    if (!best) return { clicked: false, method: 'ui_launcher_heuristic' };
+    best.el.click();
+    return { clicked: true, method: 'ui_launcher_heuristic' };
+}
+"""
+        try:
+                payload = page.evaluate(script)
+        except Exception as exc:
+                runtime.logger.debug("[SPR][OPEN][UI_HEURISTIC_FAIL] %s", exc)
+                return False, ""
+        return bool(payload.get("clicked")), str(payload.get("method") or "")
 
 
 def _open_sprinklr_widget(page: Page) -> bool:
@@ -1049,24 +1729,35 @@ def dismiss_popups(page: Page) -> None:
     """Close blocking popups that could obscure the chatbot widget."""
 
     runtime = _runtime()
-    dismissed = False
-    for _ in range(3):
-        for scopes in _iter_scopes(page):
-            _, scope = scopes
+    dismissed = 0
+    start_ts = time.monotonic()
+    runtime.logger.info("[POPUP] dismiss scan start")
+    for _ in range(2):
+        if (time.monotonic() - start_ts) >= POPUP_SCAN_TIMEOUT_SEC:
+            break
+        for scope_name, scope in _iter_popup_scopes(page):
+            if (time.monotonic() - start_ts) >= POPUP_SCAN_TIMEOUT_SEC:
+                break
             for candidate_group in (POPUP_CLOSE_CANDIDATES, POPUP_ACCEPT_CANDIDATES):
-                locator, _ = first_visible_locator(scope, candidate_group, timeout_ms=1200)
+                locator, matched = _first_quick_visible_locator(scope, candidate_group)
                 if locator is None:
                     continue
                 try:
                     locator.click(timeout=1500)
-                    dismissed = True
+                    dismissed += 1
+                    runtime.logger.info(
+                        "[POPUP] clicked scope=%s candidate=%s",
+                        scope_name,
+                        matched,
+                    )
                     page.wait_for_timeout(250)
                 except Exception:
                     continue
-    if dismissed:
-        runtime.logger.info("popups dismissed")
-    else:
-        runtime.logger.info("popups dismissed")
+    runtime.logger.info(
+        "popups dismissed count=%s elapsed_sec=%.2f",
+        dismissed,
+        time.monotonic() - start_ts,
+    )
 
 
 def open_rubicon_widget(page: Page) -> None:
@@ -1204,7 +1895,6 @@ def resolve_sprinklr_chat_context(page: Page) -> ResolvedChatContext:
             page=page,
             chat_frame_score=score,
         )
-        context.frame_inventory = scan_frame_inventory(page)
         ranked_candidates = collect_ranked_input_candidates(context, scope_name)
         editable_candidates = [candidate for candidate in ranked_candidates if candidate["grade"] in {"A", "B"}]
         top_candidate = ranked_candidates[0] if ranked_candidates else None
@@ -1334,11 +2024,23 @@ def _input_is_editable(locator: Locator) -> bool:
             locator.evaluate(
                 """
                 (el) => {
+                                    const tag = (el.tagName || '').toLowerCase();
+                                    const role = (el.getAttribute('role') || '').toLowerCase();
+                                    const contentEditable = (el.getAttribute('contenteditable') || el.contentEditable || '').toLowerCase();
                   const disabled = !!el.disabled;
                   const readOnly = !!el.readOnly;
+                                    const ariaDisabled = (el.getAttribute('aria-disabled') || '').toLowerCase() === 'true';
+                                    const ariaReadOnly = (el.getAttribute('aria-readonly') || '').toLowerCase() === 'true';
                   const aria = (el.getAttribute('aria-label') || '').toLowerCase();
                   const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
-                  if (disabled || readOnly) return false;
+                                    const inputLike = (
+                                        tag === 'input' ||
+                                        tag === 'textarea' ||
+                                        role === 'textbox' ||
+                                        (contentEditable && contentEditable !== 'false' && contentEditable !== 'inherit')
+                                    );
+                                    if (!inputLike) return false;
+                                    if (disabled || readOnly || ariaDisabled || ariaReadOnly) return false;
                   if (aria.includes('더이상 입력할 수 없습니다') || placeholder.includes('더이상 입력할 수 없습니다')) {
                     return false;
                   }
@@ -1412,6 +2114,16 @@ def _normalize_text(value: str) -> str:
 
 def _normalize_answer_text(value: str) -> str:
     return "\n".join(line.strip() for line in value.splitlines() if line.strip())
+
+
+def _select_report_answer(wait_answer: str, dom_answer: str, has_verified_response: bool) -> str:
+    """Prefer the verified wait-result answer over weaker DOM payload text."""
+
+    if has_verified_response and _normalize_answer_text(wait_answer):
+        return wait_answer
+    if dom_answer:
+        return dom_answer
+    return wait_answer
 
 
 def _contains_baseline_menu(text: str) -> bool:
@@ -1499,6 +2211,48 @@ def verify_user_echo(context: ResolvedChatContext, question: str) -> bool:
 
 def verify_user_message_echo(context: ResolvedChatContext, question: str, logger: Any) -> bool:
     return verify_user_echo(context, question)
+
+
+def _detect_login_gate(context: ResolvedChatContext) -> dict[str, Any]:
+    logger = _runtime().logger
+    scope = context.scope
+    try:
+        payload = scope.evaluate(
+                        r"""
+            () => {
+              const text = (document.body?.innerText || document.documentElement?.innerText || '').replace(/\s+/g, ' ').trim();
+              const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).map((el) => ({
+                text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim(),
+                aria: (el.getAttribute('aria-label') || '').trim(),
+                disabled: !!el.disabled || (el.getAttribute('aria-disabled') || '').toLowerCase() === 'true',
+              }));
+              return { text, buttons };
+            }
+            """
+        )
+    except Exception as exc:
+        logger.debug("[INPUT][LOGIN_GATE] probe failed: %s", exc)
+        return {"login_required": False, "reason": "", "button_text": ""}
+
+    visible_text = _norm_text(str(payload.get("text") or ""))
+    buttons = payload.get("buttons") or []
+    button_text = ""
+    for item in buttons:
+        combined = _norm_text(f"{item.get('text', '')} {item.get('aria', '')}")
+        if any(hint in combined for hint in LOGIN_REQUIRED_HINTS):
+            button_text = combined
+            break
+
+    login_required = any(hint in visible_text for hint in LOGIN_REQUIRED_HINTS) or bool(button_text)
+    if not login_required:
+        return {"login_required": False, "reason": "", "button_text": ""}
+
+    logger.info("[INPUT][LOGIN_GATE] detected button=%r text=%r", button_text, visible_text[:200])
+    return {
+        "login_required": True,
+        "reason": "Chat requires Samsung account login before composer becomes available",
+        "button_text": button_text,
+    }
 
 
 def find_chat_container(page: Page) -> Locator | None:
@@ -1613,7 +2367,7 @@ def enter_question_with_verification(
     input_locator: Locator,
     question: str,
     logger: Any,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, Locator, str]:
     """Try multiple strategies to type *question* and verify it was accepted.
 
     Returns ``(input_verified, method_used)`` where *method_used* is one of
@@ -1623,33 +2377,51 @@ def enter_question_with_verification(
 
     input_type = _detect_input_type(input_locator)
     logger.info("[INPUT] locator found via resolved context")
-    logger.info("[INPUT] input scope: %s", getattr(_runtime(), "current_case_id", ""))
+    scope_name = getattr(scope, "name", None) or getattr(scope, "url", None) or type(scope).__name__
+    logger.info("[INPUT] input scope: %s", scope_name)
     logger.info("[INPUT] detected type: %s", input_type)
 
-    if not _input_is_editable(input_locator):
-        logger.warning("[INPUT] input is not editable; aborting entry attempts")
-        return False, ""
+    effective_locator = input_locator
+    effective_selector = ""
 
-    _focus_input(input_locator, logger)
-    _clear_input(input_locator, input_type)
+    if not _input_is_editable(effective_locator):
+        logger.info("[INPUT] locator is not editable; attempting focus-proxy resolution")
+        _focus_input(effective_locator, logger)
+        proxy_locator, proxy_selector = _resolve_focus_proxy_candidate(scope, effective_locator, logger)
+        if proxy_locator is None:
+            logger.warning("[INPUT] input is not editable; aborting entry attempts")
+            return False, "", effective_locator, effective_selector
+        effective_locator = proxy_locator
+        effective_selector = proxy_selector
+        input_type = _detect_input_type(effective_locator)
+        logger.info("[INPUT] focus-proxy selected selector=%s type=%s", effective_selector or "(unknown)", input_type)
+        if not _input_is_editable(effective_locator):
+            logger.warning("[INPUT] focus-proxy target is still not editable")
+            return False, "", effective_locator, effective_selector
 
-    if _try_fill(input_locator, question, input_type, logger):
-        return True, "fill"
+    _focus_input(effective_locator, logger)
+    _clear_input(effective_locator, input_type)
 
-    _clear_input(input_locator, input_type)
-    _focus_input(input_locator, logger)
+    if _try_fill(effective_locator, question, input_type, logger):
+        return True, "fill", effective_locator, effective_selector
 
-    if _try_press_sequentially(input_locator, question, input_type, logger):
-        return True, "press_sequentially"
+    _clear_input(effective_locator, input_type)
+    _focus_input(effective_locator, logger)
 
-    _clear_input(input_locator, input_type)
-    _focus_input(input_locator, logger)
+    if _try_press_sequentially(effective_locator, question, input_type, logger):
+        return True, "press_sequentially", effective_locator, effective_selector
 
-    if _try_keyboard_type(scope, input_locator, question, input_type, logger):
-        return True, "keyboard.type"
+    _clear_input(effective_locator, input_type)
+    _focus_input(effective_locator, logger)
+
+    if _try_keyboard_type(scope, effective_locator, question, input_type, logger):
+        return True, "keyboard.type", effective_locator, effective_selector
+
+    if _try_js_fallback(effective_locator, question, input_type, logger):
+        return True, "js_fallback", effective_locator, effective_selector
 
     logger.error("[INPUT] all strategies failed for question: %.60s", question)
-    return False, ""
+    return False, "", effective_locator, effective_selector
 
 
 def capture_baseline_state(context: ResolvedChatContext) -> dict[str, Any]:
@@ -1982,16 +2754,24 @@ def submit_question(
     page: Page,
     context: ResolvedChatContext,
     question: str,
+    ready_candidate: dict[str, Any] | None = None,
+    ready_wait_result: dict[str, Any] | None = None,
 ) -> SubmissionEvidence:
-    """Submit a question using ranked editable-only failover candidates."""
+    """Submit a question using only verified ready chat-input candidates."""
 
     runtime = _runtime()
     capture_baseline_state(context)
-    ranked_candidates = collect_ranked_input_candidates(context)
-    allowed_candidates = [candidate for candidate in ranked_candidates if candidate["grade"] in {"A", "B"}]
+    ranked_candidates = _collect_chat_input_candidates(context)
+    if not ranked_candidates:
+        ranked_candidates = collect_ranked_input_candidates(context, preferred_scope=context.scope_name)
+    if ready_candidate is not None:
+        ranked_candidates = [ready_candidate, *[candidate for candidate in ranked_candidates if candidate != ready_candidate]]
+    allowed_candidates = [candidate for candidate in ranked_candidates if _is_ready_candidate(candidate)]
     top_candidate_disabled = _candidate_is_disabled_like(ranked_candidates[0] if ranked_candidates else None)
+    top_candidate_placeholder, top_candidate_aria = _top_candidate_texts(ranked_candidates)
     editable_candidates_count = len(allowed_candidates)
     max_candidates = max(1, runtime.config.rubicon_max_input_candidates)
+    ready_state = ready_wait_result or {}
 
     result = SubmissionEvidence(
         input_dom_verified=False,
@@ -2003,6 +2783,15 @@ def submit_question(
         input_selector="",
         input_candidate_score=0.0,
         top_candidate_disabled=top_candidate_disabled,
+        top_candidate_placeholder=top_candidate_placeholder,
+        top_candidate_aria=top_candidate_aria,
+        input_ready_wait_attempted=bool(ready_wait_result is not None),
+        input_ready_wait_result=str(ready_state.get("result", "") or "not_attempted"),
+        transition_wait_attempted=bool(ready_wait_result is not None),
+        transition_ready=bool(ready_state.get("ready", False)),
+        transition_timeout=bool(ready_state.get("timeout", False)),
+        transition_reason="ready" if ready_state.get("ready") else ("timeout" if ready_state.get("timeout") else ""),
+        transition_history=json.dumps(ready_state.get("history", []), ensure_ascii=False),
         failover_attempts=0,
         final_input_value_verified=False,
         user_message_echo_verified=False,
@@ -2018,13 +2807,31 @@ def submit_question(
         capture_reason="",
     )
 
-    if not allowed_candidates:
-        result.input_failure_category = "top_candidate_disabled" if top_candidate_disabled else "no_editable_candidate_after_rescan"
-        result.input_failure_reason = "No Grade A/B editable candidate available"
+    login_gate = _detect_login_gate(context)
+    if login_gate.get("login_required"):
+        result.input_failure_category = "login_required"
+        result.input_failure_reason = str(login_gate.get("reason") or "Chat login required")
+        result.capture_reason = result.input_failure_reason
         return result
 
+    if ranked_candidates and _is_disabled_transition_candidate(ranked_candidates[0]):
+        result.input_failure_category = "composer_transition_timeout"
+        result.input_failure_reason = "Input stayed in disabled transition state"
+        return result
+
+    if not allowed_candidates:
+        result.input_failure_category = "top_candidate_disabled" if top_candidate_disabled else "no_editable_candidate_after_transition"
+        result.input_failure_reason = "No ready chat input candidate available"
+        return result
+
+    runtime.logger.info(
+        "[INPUT][SUBMIT_READY] allowed=%s top=%s",
+        len(allowed_candidates),
+        ", ".join(f"{item['selector']}:{item.get('placeholder', '')}:{item.get('aria_label', '')}" for item in allowed_candidates[:max_candidates]) or "none",
+    )
+
     last_failure_category = "failover_exhausted"
-    last_failure_reason = "No editable candidate accepted the input"
+    last_failure_reason = "No ready candidate accepted the input"
 
     for rank, candidate in enumerate(allowed_candidates[:max_candidates], start=1):
         runtime.logger.info("[INPUT_V2][FAILOVER][TRY] rank=%s selector=%s", rank, candidate["selector"])
@@ -2043,8 +2850,14 @@ def submit_question(
         if context.send_locator is None:
             context.send_locator, _ = first_visible_locator(context.scope, SEND_BUTTON_CANDIDATES, timeout_ms=800)
 
-        input_dom_verified, method_used = enter_question_with_verification(candidate["scope"], candidate["locator"], question, runtime.logger)
-        input_value_verified = input_dom_verified and verify_input_dom_state(candidate["locator"], question)
+        input_dom_verified, method_used, effective_locator, effective_selector = enter_question_with_verification(candidate["scope"], candidate["locator"], question, runtime.logger)
+        if effective_locator is not None:
+            context.input_locator = effective_locator
+        if effective_selector:
+            result.input_selector = effective_selector
+            context.input_selector = effective_selector
+        input_value_verified = input_dom_verified and verify_input_dom_state(context.input_locator or candidate["locator"], question)
+        runtime.logger.info("[INPUT][VALUE_VERIFIED] verified=%s selector=%s", input_value_verified, result.input_selector or candidate["selector"])
         result.input_dom_verified = input_value_verified
         result.final_input_value_verified = input_value_verified
         result.input_method_used = method_used
@@ -2065,12 +2878,19 @@ def submit_question(
         result.before_send_chatbox_path = before_send_chatbox
 
         submit_effect_verified, submit_method_used, echo_verified, after_send_chatbox, after_send_fullpage = trigger_submit(page, context, question)
+        if submit_effect_verified and not echo_verified:
+            try:
+                context.scope.wait_for_timeout(ECHO_RENDER_DELAY_MS)
+            except Exception:
+                pass
+            echo_verified = verify_user_message_echo(context, question, runtime.logger)
         result.submit_effect_verified = submit_effect_verified
         result.submit_method_used = submit_method_used
         result.user_message_echo_verified = echo_verified
         result.after_send_chatbox_path = after_send_chatbox
         result.after_send_fullpage_path = after_send_fullpage
         result.input_verified = input_value_verified and submit_effect_verified
+        runtime.logger.info("[INPUT][ECHO_VERIFIED] verified=%s selector=%s", echo_verified, result.input_selector or candidate["selector"])
 
         if result.input_verified and echo_verified:
             runtime.logger.info("[INPUT_V2][FAILOVER][SUCCESS] selector=%s method=%s", candidate["selector"], method_used)
@@ -2100,7 +2920,7 @@ def _loading_visible(context: ResolvedChatContext) -> bool:
     return False
 
 
-def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult:
+def wait_for_answer_completion(context: ResolvedChatContext, question: str = "") -> AnswerWaitResult:
     """Wait until a post-baseline bot answer becomes stable or timeout occurs."""
 
     runtime = _runtime()
@@ -2114,7 +2934,7 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult
     text_diff_observed = False
 
     while time.perf_counter() < deadline:
-        candidate_data = build_post_baseline_answer_candidates(context)
+        candidate_data = build_post_baseline_answer_candidates(context, question=question)
         current_count = int(candidate_data.get("current_bot_count", 0) or 0)
         count_increased = bool(candidate_data.get("bot_count_increased", False))
         new_bot_segments = candidate_data.get("new_bot_segments", [])
@@ -2136,7 +2956,7 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult
         if count_increased or new_text:
             strict_candidates = candidate_data.get("strict_candidates", [])
             if strict_candidates:
-                latest_text = strict_candidates[-1]
+                latest_text = choose_best_answer_segment(strict_candidates)
             elif new_text:
                 latest_text = new_text
             elif any(
@@ -2156,6 +2976,7 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult
                 if stable_checks >= runtime.config.answer_stable_checks and not _loading_visible(context):
                     response_ms = int((time.perf_counter() - started) * 1000)
                     runtime.logger.info("[ANSWER] answer stabilized true")
+                    runtime.logger.info("[ANSWER][RESPONSE_DETECTED] response_ms=%s", response_ms)
                     return AnswerWaitResult(
                         answer=latest_text,
                         response_ms=response_ms,
@@ -2185,13 +3006,13 @@ def wait_for_answer_completion(context: ResolvedChatContext) -> AnswerWaitResult
     )
 
 
-def wait_for_new_bot_response(context: ResolvedChatContext, baseline_bot_count: int) -> AnswerWaitResult:
+def wait_for_new_bot_response(context: ResolvedChatContext, baseline_bot_count: int, question: str = "") -> AnswerWaitResult:
     """Wait until a new bot response appears after the recorded baseline count."""
 
     context.baseline_bot_count = baseline_bot_count
     if not context.baseline_bot_messages:
         context.baseline_bot_messages = extract_bot_message_texts(context)[:baseline_bot_count]
-    return wait_for_answer_completion(context)
+    return wait_for_answer_completion(context, question=question)
 
 
 def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: str) -> BrowserArtifacts:
@@ -2239,11 +3060,17 @@ def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: 
 def _status_from_failure_category(category: str) -> str:
     if category in {
         "top_candidate_disabled",
+        "composer_transition_timeout",
+        "activation_exhausted",
+        "no_editable_candidate_after_transition",
         "no_editable_candidate_after_rescan",
         "failover_exhausted",
         "user_echo_not_found",
+        "waiting_for_composer_transition",
     }:
         return "invalid_capture"
+    if category == "login_required":
+        return "failed"
     if category == "answer_not_extracted":
         return "failed"
     return "failed"
@@ -2289,6 +3116,14 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     input_failure_reason = ""
     input_candidate_score = 0.0
     top_candidate_disabled = False
+    top_candidate_placeholder = ""
+    top_candidate_aria = ""
+    transition_wait_attempted = False
+    input_ready_wait_result = ""
+    transition_ready = False
+    transition_timeout = False
+    transition_reason = ""
+    transition_history = ""
     activation_attempted = False
     activation_steps_tried = ""
     editable_candidates_count = 0
@@ -2318,6 +3153,12 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         "activation_steps": [],
         "activation_success": False,
         "editable_candidates_after_activation": 0,
+    }
+    transition_result: dict[str, Any] = {
+        "transition_ready": False,
+        "transition_timeout": False,
+        "transition_reason": "",
+        "transition_history": [],
     }
     submission: SubmissionEvidence | None = None
 
@@ -2355,7 +3196,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             context = None
 
         if context is not None:
-            input_scope = context.input_scope or context.input_scope_name or context.scope_name
+            input_scope = context.input_scope_name or context.scope_name
             input_scope_name = context.input_scope_name or context.scope_name
             input_selector = context.input_selector
             input_candidate_score = context.input_candidate_score
@@ -2379,16 +3220,77 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 runtime.config,
             )
 
-            submission = submit_question(page, context, test_case.question)
-            if not submission.input_verified and runtime.config.rubicon_force_activation:
-                activation_result = ensure_composer_ready(page, context)
-                activation_attempted = bool(activation_result.get("activation_attempted", False))
-                activation_steps_tried = ", ".join(activation_result.get("activation_steps", []))
-                editable_candidates_count = int(activation_result.get("editable_candidates_after_activation", 0) or 0)
-                context.frame_inventory = scan_frame_inventory(page)
-                submission = submit_question(page, context, test_case.question)
+            ranked_candidates = collect_ranked_input_candidates(context, preferred_scope=context.scope_name)
+            top_candidate_placeholder, top_candidate_aria = _top_candidate_texts(ranked_candidates)
+            top_candidate_disabled = _candidate_is_disabled_like(ranked_candidates[0] if ranked_candidates else None)
+
+            needs_ready_wait = not ranked_candidates or top_candidate_disabled or not any(
+                _is_ready_composer_candidate(candidate) for candidate in ranked_candidates
+            )
+            if needs_ready_wait:
+                runtime.logger.info("[INPUT] waiting for ready composer before submit")
+                transition_wait_attempted = True
+                transition_result = wait_for_composer_transition(page, context, test_case.id, runtime.config)
+                input_ready_wait_result = "ready" if transition_result.get("transition_ready") else "timeout"
+                transition_ready = bool(transition_result.get("transition_ready", False))
+                transition_timeout = bool(transition_result.get("transition_timeout", False))
+                transition_reason = str(transition_result.get("transition_reason", "") or "")
+                transition_history = json.dumps(transition_result.get("transition_history", []), ensure_ascii=False)
+
+                if transition_ready:
+                    ready_candidate = transition_result.get("ready_candidate")
+                    if ready_candidate is not None:
+                        _assign_candidate_to_context(context, ready_candidate)
+                    ranked_candidates = collect_ranked_input_candidates(
+                        context,
+                        preferred_scope=str(transition_result.get("ready_scope", "") or context.scope_name),
+                    )
+                    top_candidate_placeholder, top_candidate_aria = _top_candidate_texts(ranked_candidates)
+                    runtime.logger.info("[INPUT] composer transition completed; trying submit before activation")
+                else:
+                    runtime.logger.warning("[INPUT] composer transition timeout; entering activation fallback")
+                    if runtime.config.rubicon_force_activation:
+                        activation_result = ensure_composer_ready(page, context)
+                        activation_attempted = True
+                        activation_steps_tried = ", ".join(activation_result.get("activation_steps", []))
+                        editable_candidates_count = int(activation_result.get("editable_candidates_after_activation", 0) or 0)
+                        if activation_result.get("activation_success"):
+                            ranked_candidates = collect_ranked_input_candidates(context, preferred_scope=context.scope_name)
+                            top_candidate_placeholder, top_candidate_aria = _top_candidate_texts(ranked_candidates)
+                            top_candidate_disabled = _candidate_is_disabled_like(ranked_candidates[0] if ranked_candidates else None)
+                            input_ready_wait_result = "activation_ready"
+                        else:
+                            context.frame_inventory = scan_frame_inventory(page)
+                            input_failure_category = "activation_exhausted"
+                            input_failure_reason = "Activation fallback did not reveal a ready composer"
+                    else:
+                        input_failure_category = "composer_transition_timeout"
+                        input_failure_reason = "Composer stayed in disabled transition state until timeout"
             else:
-                activation_attempted = False
+                input_ready_wait_result = "ready_already_present"
+                runtime.logger.info("[INPUT] no transition-disabled top candidate; continue normal submit flow")
+
+            _, opened_footer_screenshot_path = capture_named_artifact(
+                page,
+                context,
+                test_case.id,
+                "opened_footer",
+                runtime.config,
+            )
+
+            submission = submit_question(
+                page,
+                context,
+                test_case.question,
+                ready_candidate=transition_result.get("ready_candidate") if transition_result.get("transition_ready") else None,
+                ready_wait_result={
+                    "ready": transition_ready,
+                    "timeout": transition_timeout,
+                    "result": input_ready_wait_result or ("ready" if transition_ready else ("timeout" if transition_timeout else "not_attempted")),
+                    "history": transition_result.get("transition_history", []),
+                } if transition_wait_attempted or input_ready_wait_result else None,
+            )
+            if not activation_attempted:
                 editable_candidates_count = submission.editable_candidates_count
 
             if submission is not None:
@@ -2402,6 +3304,14 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 input_selector = submission.input_selector or input_selector
                 input_candidate_score = submission.input_candidate_score or input_candidate_score
                 top_candidate_disabled = submission.top_candidate_disabled
+                top_candidate_placeholder = submission.top_candidate_placeholder or top_candidate_placeholder
+                top_candidate_aria = submission.top_candidate_aria or top_candidate_aria
+                input_ready_wait_result = submission.input_ready_wait_result or input_ready_wait_result
+                transition_wait_attempted = submission.transition_wait_attempted or transition_wait_attempted
+                transition_ready = submission.transition_ready or transition_ready
+                transition_timeout = submission.transition_timeout or transition_timeout
+                transition_reason = submission.transition_reason or transition_reason
+                transition_history = submission.transition_history or transition_history
                 failover_attempts = submission.failover_attempts
                 final_input_target_frame = submission.final_input_target_frame
                 user_message_echo_verified = submission.user_message_echo_verified
@@ -2413,12 +3323,15 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 input_candidates_debug = submission.input_candidates_debug or input_candidates_debug
                 input_candidate_logs = [line for line in input_candidates_debug.splitlines() if line.strip()]
                 if submission.input_failure_category:
-                    input_failure_category = submission.input_failure_category
-                    input_failure_reason = submission.input_failure_reason
+                    if submission.input_failure_category != "waiting_for_composer_transition" or not transition_wait_attempted:
+                        input_failure_category = submission.input_failure_category
+                        input_failure_reason = submission.input_failure_reason
+                        if submission.input_failure_category == "login_required":
+                            availability_status = "login_required"
 
         if context is None or submission is None or not submission.input_verified:
             if not input_failure_category:
-                input_failure_category = "no_editable_candidate_after_rescan"
+                input_failure_category = "no_editable_candidate_after_transition"
                 input_failure_reason = "Submit flow never reached a verified editable input candidate"
             status = _status_from_failure_category(input_failure_category)
             reason = input_failure_reason
@@ -2426,7 +3339,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             if status == "invalid_capture":
                 fix_suggestion = CAPTURE_INVALID_FIX
         else:
-            wait_result = wait_for_new_bot_response(context, context.baseline_bot_count)
+            wait_result = wait_for_new_bot_response(context, context.baseline_bot_count, question=test_case.question)
             answer_raw = wait_result.answer
             answer_normalized = _normalize_answer_text(wait_result.answer)
             answer = answer_normalized
@@ -2453,8 +3366,11 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
 
             dom_payload = extract_dom_payload(context, artifacts.html_fragment_path, question=test_case.question)
             dom_answer = dom_payload.get("answer", "")
-            if dom_answer:
-                answer_raw = dom_answer
+            selected_answer_raw = _select_report_answer(answer_raw, dom_answer, new_bot_response_detected)
+            if dom_answer and selected_answer_raw != dom_answer:
+                runtime.logger.info("[ANSWER] preserving verified wait answer over DOM payload answer")
+            if selected_answer_raw:
+                answer_raw = selected_answer_raw
                 answer_normalized = _normalize_answer_text(answer_raw)
                 answer = answer_normalized
             message_history = dom_payload.get("history", [])
@@ -2572,6 +3488,14 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         input_failure_reason=input_failure_reason,
         input_candidate_score=input_candidate_score,
         top_candidate_disabled=top_candidate_disabled,
+        top_candidate_placeholder=top_candidate_placeholder,
+        top_candidate_aria=top_candidate_aria,
+        input_ready_wait_result=input_ready_wait_result,
+        transition_wait_attempted=transition_wait_attempted,
+        transition_ready=transition_ready,
+        transition_timeout=transition_timeout,
+        transition_reason=transition_reason,
+        transition_history=transition_history,
         activation_attempted=activation_attempted,
         activation_steps_tried=activation_steps_tried,
         editable_candidates_count=editable_candidates_count,
