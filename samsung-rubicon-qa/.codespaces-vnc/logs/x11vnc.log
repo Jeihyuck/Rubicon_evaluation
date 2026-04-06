@@ -1,79 +1,79 @@
-05/04/2026 13:41:11 passing arg to libvncserver: -rfbport
-05/04/2026 13:41:11 passing arg to libvncserver: 5900
-05/04/2026 13:41:11 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 5653
-05/04/2026 13:41:11 Using X display :99
-05/04/2026 13:41:11 rootwin: 0x21f reswin: 0x200001 dpy: 0xa5f1f410
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 ------------------ USEFUL INFORMATION ------------------
-05/04/2026 13:41:11 X DAMAGE available on display, using it for polling hints.
-05/04/2026 13:41:11   To disable this behavior use: '-noxdamage'
-05/04/2026 13:41:11 
-05/04/2026 13:41:11   Most compositing window managers like 'compiz' or 'beryl'
-05/04/2026 13:41:11   cause X DAMAGE to fail, and so you may not see any screen
-05/04/2026 13:41:11   updates via VNC.  Either disable 'compiz' (recommended) or
-05/04/2026 13:41:11   supply the x11vnc '-noxdamage' command line option.
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 Wireframing: -wireframe mode is in effect for window moves.
-05/04/2026 13:41:11   If this yields undesired behavior (poor response, painting
-05/04/2026 13:41:11   errors, etc) it may be disabled:
-05/04/2026 13:41:11    - use '-nowf' to disable wireframing completely.
-05/04/2026 13:41:11    - use '-nowcr' to disable the Copy Rectangle after the
-05/04/2026 13:41:11      moved window is released in the new position.
-05/04/2026 13:41:11   Also see the -help entry for tuning parameters.
-05/04/2026 13:41:11   You can press 3 Alt_L's (Left "Alt" key) in a row to 
-05/04/2026 13:41:11   repaint the screen, also see the -fixscreen option for
-05/04/2026 13:41:11   periodic repaints.
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 XFIXES available on display, resetting cursor mode
-05/04/2026 13:41:11   to: '-cursor most'.
-05/04/2026 13:41:11   to disable this behavior use: '-cursor arrow'
-05/04/2026 13:41:11   or '-noxfixes'.
-05/04/2026 13:41:11 using XFIXES for cursor drawing.
-05/04/2026 13:41:11 GrabServer control via XTEST.
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 Scroll Detection: -scrollcopyrect mode is in effect to
-05/04/2026 13:41:11   use RECORD extension to try to detect scrolling windows
-05/04/2026 13:41:11   (induced by either user keystroke or mouse input).
-05/04/2026 13:41:11   If this yields undesired behavior (poor response, painting
-05/04/2026 13:41:11   errors, etc) it may be disabled via: '-noscr'
-05/04/2026 13:41:11   Also see the -help entry for tuning parameters.
-05/04/2026 13:41:11   You can press 3 Alt_L's (Left "Alt" key) in a row to 
-05/04/2026 13:41:11   repaint the screen, also see the -fixscreen option for
-05/04/2026 13:41:11   periodic repaints.
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 XKEYBOARD: number of keysyms per keycode 7 is greater
-05/04/2026 13:41:11   than 4 and 51 keysyms are mapped above 4.
-05/04/2026 13:41:11   Automatically switching to -xkb mode.
-05/04/2026 13:41:11   If this makes the key mapping worse you can
-05/04/2026 13:41:11   disable it with the "-noxkb" option.
-05/04/2026 13:41:11   Also, remember "-remap DEAD" for accenting characters.
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 X FBPM extension not supported.
+06/04/2026 01:18:27 passing arg to libvncserver: -rfbport
+06/04/2026 01:18:27 passing arg to libvncserver: 5900
+06/04/2026 01:18:27 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 7113
+06/04/2026 01:18:27 Using X display :99
+06/04/2026 01:18:27 rootwin: 0x21f reswin: 0x200001 dpy: 0x1c7fb410
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 ------------------ USEFUL INFORMATION ------------------
+06/04/2026 01:18:27 X DAMAGE available on display, using it for polling hints.
+06/04/2026 01:18:27   To disable this behavior use: '-noxdamage'
+06/04/2026 01:18:27 
+06/04/2026 01:18:27   Most compositing window managers like 'compiz' or 'beryl'
+06/04/2026 01:18:27   cause X DAMAGE to fail, and so you may not see any screen
+06/04/2026 01:18:27   updates via VNC.  Either disable 'compiz' (recommended) or
+06/04/2026 01:18:27   supply the x11vnc '-noxdamage' command line option.
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 Wireframing: -wireframe mode is in effect for window moves.
+06/04/2026 01:18:27   If this yields undesired behavior (poor response, painting
+06/04/2026 01:18:27   errors, etc) it may be disabled:
+06/04/2026 01:18:27    - use '-nowf' to disable wireframing completely.
+06/04/2026 01:18:27    - use '-nowcr' to disable the Copy Rectangle after the
+06/04/2026 01:18:27      moved window is released in the new position.
+06/04/2026 01:18:27   Also see the -help entry for tuning parameters.
+06/04/2026 01:18:27   You can press 3 Alt_L's (Left "Alt" key) in a row to 
+06/04/2026 01:18:27   repaint the screen, also see the -fixscreen option for
+06/04/2026 01:18:27   periodic repaints.
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 XFIXES available on display, resetting cursor mode
+06/04/2026 01:18:27   to: '-cursor most'.
+06/04/2026 01:18:27   to disable this behavior use: '-cursor arrow'
+06/04/2026 01:18:27   or '-noxfixes'.
+06/04/2026 01:18:27 using XFIXES for cursor drawing.
+06/04/2026 01:18:27 GrabServer control via XTEST.
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 Scroll Detection: -scrollcopyrect mode is in effect to
+06/04/2026 01:18:27   use RECORD extension to try to detect scrolling windows
+06/04/2026 01:18:27   (induced by either user keystroke or mouse input).
+06/04/2026 01:18:27   If this yields undesired behavior (poor response, painting
+06/04/2026 01:18:27   errors, etc) it may be disabled via: '-noscr'
+06/04/2026 01:18:27   Also see the -help entry for tuning parameters.
+06/04/2026 01:18:27   You can press 3 Alt_L's (Left "Alt" key) in a row to 
+06/04/2026 01:18:27   repaint the screen, also see the -fixscreen option for
+06/04/2026 01:18:27   periodic repaints.
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 XKEYBOARD: number of keysyms per keycode 7 is greater
+06/04/2026 01:18:27   than 4 and 51 keysyms are mapped above 4.
+06/04/2026 01:18:27   Automatically switching to -xkb mode.
+06/04/2026 01:18:27   If this makes the key mapping worse you can
+06/04/2026 01:18:27   disable it with the "-noxkb" option.
+06/04/2026 01:18:27   Also, remember "-remap DEAD" for accenting characters.
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 X FBPM extension not supported.
 Xlib:  extension "DPMS" missing on display ":99".
-05/04/2026 13:41:11 X display is not capable of DPMS.
-05/04/2026 13:41:11 --------------------------------------------------------
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 Default visual ID: 0x21
-05/04/2026 13:41:11 Read initial data from X display into framebuffer.
-05/04/2026 13:41:11 initialize_screen: fb_depth/fb_bpp/fb_Bpl 24/32/5760
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 X display :99 is 32bpp depth=24 true color
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 Listening for VNC connections on TCP port 5900
-05/04/2026 13:41:11 Listening for VNC connections on TCP6 port 5900
-05/04/2026 13:41:11 listen6: bind: Address already in use
-05/04/2026 13:41:11 Not listening on IPv6 interface.
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 Xinerama is present and active (e.g. multi-head).
-05/04/2026 13:41:11 Xinerama: number of sub-screens: 1
-05/04/2026 13:41:11 Xinerama: no blackouts needed (only one sub-screen)
-05/04/2026 13:41:11 
-05/04/2026 13:41:11 fb read rate: 828 MB/sec
-05/04/2026 13:41:11 fast read: reset -wait  ms to: 10
-05/04/2026 13:41:11 fast read: reset -defer ms to: 10
-05/04/2026 13:41:11 The X server says there are 10 mouse buttons.
-05/04/2026 13:41:11 screen setup finished.
-05/04/2026 13:41:11 
+06/04/2026 01:18:27 X display is not capable of DPMS.
+06/04/2026 01:18:27 --------------------------------------------------------
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 Default visual ID: 0x21
+06/04/2026 01:18:27 Read initial data from X display into framebuffer.
+06/04/2026 01:18:27 initialize_screen: fb_depth/fb_bpp/fb_Bpl 24/32/5760
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 X display :99 is 32bpp depth=24 true color
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 Listening for VNC connections on TCP port 5900
+06/04/2026 01:18:27 Listening for VNC connections on TCP6 port 5900
+06/04/2026 01:18:27 listen6: bind: Address already in use
+06/04/2026 01:18:27 Not listening on IPv6 interface.
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 Xinerama is present and active (e.g. multi-head).
+06/04/2026 01:18:27 Xinerama: number of sub-screens: 1
+06/04/2026 01:18:27 Xinerama: no blackouts needed (only one sub-screen)
+06/04/2026 01:18:27 
+06/04/2026 01:18:27 fb read rate: 268 MB/sec
+06/04/2026 01:18:27 fast read: reset -wait  ms to: 10
+06/04/2026 01:18:27 fast read: reset -defer ms to: 10
+06/04/2026 01:18:27 The X server says there are 10 mouse buttons.
+06/04/2026 01:18:27 screen setup finished.
+06/04/2026 01:18:27 
 
 The VNC desktop is:      codespaces-17236d:0
 PORT=5900
@@ -89,3 +89,325 @@ retrieval.  It should work with any VNC viewer.  Try it by running:
 One can also add -ncache_cr for smooth 'copyrect' window motion.
 More info: http://www.karlrunge.com/x11vnc/faq.html#faq-client-caching
 
+06/04/2026 01:18:44 Got connection from client 127.0.0.1
+06/04/2026 01:18:44   0 other clients
+06/04/2026 01:18:45 Normal socket connection
+06/04/2026 01:18:45 Disabled X server key autorepeat.
+06/04/2026 01:18:45   to force back on run: 'xset r on' (3 times)
+06/04/2026 01:18:45 incr accepted_client=1 for 127.0.0.1:37500  sock=11
+06/04/2026 01:18:45 Client Protocol Version 3.8
+06/04/2026 01:18:45 Protocol version sent 3.8, using 3.8
+06/04/2026 01:18:45 created   xdamage object: 0x200031
+06/04/2026 01:18:45 rfbProcessClientSecurityType: executing handler for type 1
+06/04/2026 01:18:45 rfbProcessClientSecurityType: returning securityResult for client rfb version >= 3.8
+06/04/2026 01:18:45 client_set_net: 127.0.0.1  0.0002
+06/04/2026 01:18:46 Pixel format for client 127.0.0.1:
+06/04/2026 01:18:46   32 bpp, depth 24, little endian
+06/04/2026 01:18:46   true colour: max r 255 g 255 b 255, shift r 0 g 8 b 16
+06/04/2026 01:18:46 copy_tiles: allocating first_line at size 46
+06/04/2026 01:18:46 rfbProcessClientNormalMessage: ignoring unsupported encoding type tightPng
+06/04/2026 01:18:46 Using image quality level 6 for client 127.0.0.1
+06/04/2026 01:18:46 Using JPEG subsampling 0, Q79 for client 127.0.0.1
+06/04/2026 01:18:46 Using compression level 2 for client 127.0.0.1
+06/04/2026 01:18:46 Enabling NewFBSize protocol extension for client 127.0.0.1
+06/04/2026 01:18:46 Enabling LastRect protocol extension for client 127.0.0.1
+06/04/2026 01:18:46 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEFE)
+06/04/2026 01:18:46 Enabling ExtDesktopSize protocol extension for client 127.0.0.1
+06/04/2026 01:18:46 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEC8)
+06/04/2026 01:18:46 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEC7)
+06/04/2026 01:18:46 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFECD)
+06/04/2026 01:18:46 Enabling ExtendedClipboard extension for client 127.0.0.1
+06/04/2026 01:18:46 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0x574D5664)
+06/04/2026 01:18:46 Enabling full-color cursor updates for client 127.0.0.1
+06/04/2026 01:18:46 Using tight encoding for client 127.0.0.1
+06/04/2026 01:18:46 Sending rfbEncodingExtDesktopSize for size (1440x1200) 
+06/04/2026 01:18:46 client 1 network rate 77.2 KB/sec (25354.0 eff KB/sec)
+06/04/2026 01:18:46 client 1 latency:  137.3 ms
+06/04/2026 01:18:46 dt1: 0.0046, dt2: 0.2681 dt3: 0.1373 bytes: 21056
+06/04/2026 01:18:46 link_rate: LR_BROADBAND - 137 ms, 77 KB/s
+06/04/2026 01:18:55 created selwin: 0x200032
+06/04/2026 01:18:55 called initialize_xfixes()
+06/04/2026 01:23:47 idle keyboard:   turning X autorepeat back on.
+06/04/2026 01:25:29 client_count: 0
+06/04/2026 01:25:29 Client 127.0.0.1 gone
+06/04/2026 01:25:29 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 01:25:29  ServerCutText       :      2 |        24/       24 (  0.0%)
+06/04/2026 01:25:29  FramebufferUpdate   :    662 |         0/        0 (  0.0%)
+06/04/2026 01:25:29  LastRect            :    545 |      6540/     6540 (  0.0%)
+06/04/2026 01:25:29  tight               :  43902 |  87079663/-1069255312 (  0.0%)
+06/04/2026 01:25:29  RichCursor          :      4 |      8574/     8574 (  0.0%)
+06/04/2026 01:25:29  ExtendedDesktopSize :      1 |        32/       32 (  0.0%)
+06/04/2026 01:25:29  TOTALS              :  45116 |  87094833/-1069240142 (  0.0%)
+06/04/2026 01:25:29 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 01:25:29  PointerEvent        :     12 |        72/       72 (  0.0%)
+06/04/2026 01:25:29  ClientCutText       :      1 |        16/       16 (  0.0%)
+06/04/2026 01:25:29  FramebufferUpdate   :    663 |      6630/     6630 (  0.0%)
+06/04/2026 01:25:29  SetEncodings        :      1 |        80/       80 (  0.0%)
+06/04/2026 01:25:29  SetPixelFormat      :      1 |        20/       20 (  0.0%)
+06/04/2026 01:25:29  TOTALS              :    678 |      6818/     6818 (  0.0%)
+06/04/2026 01:25:32 destroyed xdamage object: 0x200031
+06/04/2026 02:14:39 Got connection from client ::1
+06/04/2026 02:14:39   0 other clients
+06/04/2026 02:14:39 Normal socket connection
+06/04/2026 02:14:39 Disabled X server key autorepeat.
+06/04/2026 02:14:39   to force back on run: 'xset r on' (3 times)
+06/04/2026 02:14:39 incr accepted_client=2 for ::1:41500  sock=11
+06/04/2026 02:14:39 Got connection from client ::1
+06/04/2026 02:14:39   1 other clients
+06/04/2026 02:14:39 webSocketsHandshake: invalid client header
+06/04/2026 02:14:39 Client ::1 gone
+06/04/2026 02:14:39 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:39  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:39 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:39  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:39 Got connection from client ::1
+06/04/2026 02:14:39   1 other clients
+06/04/2026 02:14:39 Normal socket connection
+06/04/2026 02:14:39 incr accepted_client=3 for ::1:41516  sock=12
+06/04/2026 02:14:39 Client Protocol Version 3.8
+06/04/2026 02:14:39 Protocol version sent 3.8, using 3.8
+06/04/2026 02:14:40 Got connection from client ::1
+06/04/2026 02:14:40   2 other clients
+06/04/2026 02:14:40 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:40 SSL connection but no cert specified
+06/04/2026 02:14:40 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:40 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Got connection from client ::1
+06/04/2026 02:14:40   2 other clients
+06/04/2026 02:14:40 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:40 SSL connection but no cert specified
+06/04/2026 02:14:40 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:40 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Client Protocol Version 3.8
+06/04/2026 02:14:40 Protocol version sent 3.8, using 3.8
+06/04/2026 02:14:40 Got connection from client ::1
+06/04/2026 02:14:40   2 other clients
+06/04/2026 02:14:40 webSocketsHandshake: invalid client header
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Got connection from client ::1
+06/04/2026 02:14:40   2 other clients
+06/04/2026 02:14:40 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:40 SSL connection but no cert specified
+06/04/2026 02:14:40 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:40 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 rfbProcessClientSecurityType: client gone
+06/04/2026 02:14:40 client_count: 1
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Got connection from client ::1
+06/04/2026 02:14:40   1 other clients
+06/04/2026 02:14:40 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:40 SSL connection but no cert specified
+06/04/2026 02:14:40 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:40 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 rfbProcessClientSecurityType: client gone
+06/04/2026 02:14:40 client_count: 0
+06/04/2026 02:14:40 Restored X server key autorepeat to: 1
+06/04/2026 02:14:40 Client ::1 gone
+06/04/2026 02:14:40 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:40 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:40  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:41 Got connection from client ::1
+06/04/2026 02:14:41   0 other clients
+06/04/2026 02:14:41 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:41 SSL connection but no cert specified
+06/04/2026 02:14:41 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:41 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:41 Client ::1 gone
+06/04/2026 02:14:41 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:41  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:41 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:41  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:41 Got connection from client ::1
+06/04/2026 02:14:41   0 other clients
+06/04/2026 02:14:41 Got 'ws' WebSockets handshake
+06/04/2026 02:14:41 Hixie no longer supported
+06/04/2026 02:14:41 Client ::1 gone
+06/04/2026 02:14:41 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:41  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:41 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:41  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:41 Got connection from client ::1
+06/04/2026 02:14:41   0 other clients
+06/04/2026 02:14:41 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:41 SSL connection but no cert specified
+06/04/2026 02:14:41 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:41 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:41 Client ::1 gone
+06/04/2026 02:14:41 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:41  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:41 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:41  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:42 Got connection from client ::1
+06/04/2026 02:14:42   0 other clients
+06/04/2026 02:14:42 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:42 SSL connection but no cert specified
+06/04/2026 02:14:42 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:42 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:42 Client ::1 gone
+06/04/2026 02:14:42 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:42  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:42 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:42  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:45 Got connection from client 127.0.0.1
+06/04/2026 02:14:45   0 other clients
+06/04/2026 02:14:45 Normal socket connection
+06/04/2026 02:14:45 Disabled X server key autorepeat.
+06/04/2026 02:14:45   to force back on run: 'xset r on' (3 times)
+06/04/2026 02:14:45 incr accepted_client=4 for 127.0.0.1:42602  sock=11
+06/04/2026 02:14:45 Got connection from client 127.0.0.1
+06/04/2026 02:14:45   1 other clients
+06/04/2026 02:14:45 webSocketsHandshake: invalid client header
+06/04/2026 02:14:45 Client 127.0.0.1 gone
+06/04/2026 02:14:45 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:45  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:45 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:45  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:46 Got connection from client 127.0.0.1
+06/04/2026 02:14:46   1 other clients
+06/04/2026 02:14:46 Normal socket connection
+06/04/2026 02:14:46 incr accepted_client=5 for 127.0.0.1:42624  sock=12
+06/04/2026 02:14:46 Client Protocol Version 3.8
+06/04/2026 02:14:46 Protocol version sent 3.8, using 3.8
+06/04/2026 02:14:46 Got connection from client 127.0.0.1
+06/04/2026 02:14:46   2 other clients
+06/04/2026 02:14:46 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:46 SSL connection but no cert specified
+06/04/2026 02:14:46 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:46 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:46 Client 127.0.0.1 gone
+06/04/2026 02:14:46 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:46  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:46 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:46  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:46 Got connection from client 127.0.0.1
+06/04/2026 02:14:46   2 other clients
+06/04/2026 02:14:46 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:46 SSL connection but no cert specified
+06/04/2026 02:14:46 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:46 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:46 Client 127.0.0.1 gone
+06/04/2026 02:14:46 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:46  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:46 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:46  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:46 Client Protocol Version 3.8
+06/04/2026 02:14:46 Protocol version sent 3.8, using 3.8
+06/04/2026 02:14:46 Got connection from client 127.0.0.1
+06/04/2026 02:14:46   2 other clients
+06/04/2026 02:14:46 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:46 SSL connection but no cert specified
+06/04/2026 02:14:46 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:46 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:46 Client 127.0.0.1 gone
+06/04/2026 02:14:46 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:46  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:46 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:46  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Got connection from client 127.0.0.1
+06/04/2026 02:14:47   2 other clients
+06/04/2026 02:14:47 webSocketsHandshake: invalid client header
+06/04/2026 02:14:47 Client 127.0.0.1 gone
+06/04/2026 02:14:47 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 rfbProcessClientSecurityType: client gone
+06/04/2026 02:14:47 client_count: 1
+06/04/2026 02:14:47 Client 127.0.0.1 gone
+06/04/2026 02:14:47 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Got connection from client 127.0.0.1
+06/04/2026 02:14:47   1 other clients
+06/04/2026 02:14:47 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:47 SSL connection but no cert specified
+06/04/2026 02:14:47 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:47 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:47 Client 127.0.0.1 gone
+06/04/2026 02:14:47 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 active keyboard: turning X autorepeat off.
+06/04/2026 02:14:47 created   xdamage object: 0x200033
+06/04/2026 02:14:47 Got connection from client 127.0.0.1
+06/04/2026 02:14:47   1 other clients
+06/04/2026 02:14:47 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:47 SSL connection but no cert specified
+06/04/2026 02:14:47 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:47 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:47 Client 127.0.0.1 gone
+06/04/2026 02:14:47 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 rfbProcessClientSecurityType: client gone
+06/04/2026 02:14:47 client_count: 0
+06/04/2026 02:14:47 Restored X server key autorepeat to: 1
+06/04/2026 02:14:47 Client 127.0.0.1 gone
+06/04/2026 02:14:47 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:47 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:47  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:48 Got connection from client 127.0.0.1
+06/04/2026 02:14:48   0 other clients
+06/04/2026 02:14:48 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:48 SSL connection but no cert specified
+06/04/2026 02:14:48 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:48 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:48 Client 127.0.0.1 gone
+06/04/2026 02:14:48 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:48  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:48 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:48  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:48 Got connection from client 127.0.0.1
+06/04/2026 02:14:48   0 other clients
+06/04/2026 02:14:48 Got 'ws' WebSockets handshake
+06/04/2026 02:14:48 Hixie no longer supported
+06/04/2026 02:14:48 Client 127.0.0.1 gone
+06/04/2026 02:14:48 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:48  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:48 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:48  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:49 Got connection from client 127.0.0.1
+06/04/2026 02:14:49   0 other clients
+06/04/2026 02:14:49 Got TLS/SSL WebSockets connection
+06/04/2026 02:14:49 SSL connection but no cert specified
+06/04/2026 02:14:49 rfbssl_init: (unknown error code) (4294967295)
+06/04/2026 02:14:49 webSocketsHandshake: rfbssl_init failed
+06/04/2026 02:14:49 Client 127.0.0.1 gone
+06/04/2026 02:14:49 Statistics             events    Transmit/ RawEquiv ( saved)
+06/04/2026 02:14:49  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:49 Statistics             events    Received/ RawEquiv ( saved)
+06/04/2026 02:14:49  TOTALS              :      0 |         0/        0 (  0.0%)
+06/04/2026 02:14:52 destroyed xdamage object: 0x200033

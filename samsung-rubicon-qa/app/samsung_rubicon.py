@@ -240,6 +240,10 @@ ANSWER_SUGGESTION_LINE_HINTS = [
     "삼성케어플러스 가입이면 혜택이 있나요?",
 ]
 
+HISTORY_ALWAYS_DROP_HINTS = [
+    "고객지원이 필요하신가요? Samsung AI CS Chat 을 클릭해주세요.",
+]
+
 MIN_MAIN_ANSWER_LEN = 40
 
 _KOREAN_DATE_RE = re.compile(r"\b20\d{2}년\s*\d{1,2}월\s*\d{1,2}일\b")
@@ -2262,27 +2266,92 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return out
 
 
-def _clean_message_history(items: list[str]) -> tuple[list[str], int]:
+def _split_history_fragments(item: str) -> list[str]:
+    normalized = _normalize_answer_text(item)
+    if not normalized:
+        return []
+    if " , " not in normalized:
+        return [normalized]
+    return [part.strip(" ,") for part in normalized.split(" , ") if part.strip(" ,")]
+
+
+def _matches_question(text: str, question: str) -> bool:
+    text_n = _normalize_text(_normalize_answer_text(text))
+    question_n = _normalize_text(_normalize_answer_text(question))
+    return bool(text_n and question_n and text_n == question_n)
+
+
+def _is_followup_question_chip(text: str, question: str = "") -> bool:
+    text_n = _normalize_answer_text(text)
+    if not text_n:
+        return False
+    if question and _matches_question(text_n, question):
+        return False
+    if text_n in ANSWER_SUGGESTION_LINE_HINTS:
+        return True
+    if len(text_n) > 80:
+        return False
+    return text_n.endswith("?") or text_n.endswith("요?")
+
+
+def _focus_message_history(items: list[str], question: str, actual_answer: str) -> list[str]:
+    question_n = _normalize_answer_text(question)
+    answer_n = _clean_bot_answer_candidate(actual_answer)
+    if question_n and answer_n:
+        return [question_n, answer_n]
+
+    if not items:
+        return []
+
+    if question_n:
+        for index in range(len(items) - 1, -1, -1):
+            if _matches_question(items[index], question_n):
+                tail = items[index:]
+                focused = [question_n]
+                for item in tail:
+                    item_n = _normalize_answer_text(item)
+                    if not item_n or _matches_question(item_n, question_n):
+                        continue
+                    if _is_followup_question_chip(item_n, question_n):
+                        continue
+                    focused.append(item_n)
+                return _dedupe_preserve_order(focused)
+
+    return items
+
+
+def _clean_message_history(items: list[str], question: str = "", actual_answer: str = "") -> tuple[list[str], int]:
     cleaned_items: list[str] = []
     noise_removed = 0
     for item in items:
-        normalized = _normalize_answer_text(item)
-        if not normalized:
-            continue
-        details = _clean_bot_answer_candidate_details(normalized)
-        clean = details["clean"]
-        if clean:
-            cleaned_items.append(clean)
-            noise_removed += int(details["noise_lines_removed"] or 0)
-            continue
-        if _is_noise_line(normalized):
-            noise_removed += 1
+        for fragment in _split_history_fragments(item):
+            normalized = _normalize_answer_text(fragment)
+            if not normalized:
+                continue
+            if normalized in HISTORY_ALWAYS_DROP_HINTS:
+                noise_removed += 1
+                continue
+            details = _clean_bot_answer_candidate_details(normalized)
+            clean = details["clean"]
+            if clean:
+                if clean in HISTORY_ALWAYS_DROP_HINTS:
+                    noise_removed += 1
+                    continue
+                if _is_followup_question_chip(clean, question):
+                    continue
+                cleaned_items.append(clean)
+                noise_removed += int(details["noise_lines_removed"] or 0)
+                continue
+            if _is_noise_line(normalized):
+                noise_removed += 1
     deduped = _dedupe_preserve_order(cleaned_items)
+    focused = _focus_message_history(deduped, question, actual_answer)
     runtime = _RUNTIME
     if runtime is not None:
         runtime.logger.info("[HISTORY][NOISE_REMOVED] count=%s", noise_removed)
         runtime.logger.info("[HISTORY][DEDUPED] before=%s after=%s", len(cleaned_items), len(deduped))
-    return deduped, noise_removed
+        runtime.logger.info("[HISTORY][FOCUSED] before=%s after=%s", len(deduped), len(focused))
+    return focused, noise_removed
 
 
 def _extract_last_bot_message_locator(context: ResolvedChatContext) -> Locator | None:
@@ -2399,6 +2468,70 @@ def _select_report_answer(wait_answer: str, dom_answer: str, has_verified_respon
     if dom_answer:
         return dom_answer
     return wait_answer
+
+
+def _recover_dom_response_candidate(
+    question: str,
+    dom_answer: str,
+    last_answer_payload: dict[str, Any],
+    message_history: list[str],
+) -> dict[str, Any]:
+    candidates: list[dict[str, str]] = []
+
+    def add_candidate(raw_text: str, clean_text: str, source: str) -> None:
+        raw_n = _normalize_answer_text(raw_text)
+        clean_n = _clean_bot_answer_candidate(clean_text or raw_text)
+        if not raw_n or not clean_n or not _looks_like_main_answer(clean_n):
+            return
+        candidates.append(
+            {
+                "answer_raw": raw_n,
+                "actual_answer": clean_n,
+                "actual_answer_clean": clean_n,
+                "source": source,
+            }
+        )
+
+    add_candidate(
+        str(last_answer_payload.get("answer_raw") or ""),
+        str(last_answer_payload.get("actual_answer_clean") or last_answer_payload.get("actual_answer") or ""),
+        str(last_answer_payload.get("extraction_source") or "dom_last_answer_recovered"),
+    )
+    add_candidate(dom_answer, dom_answer, "dom_payload_recovered")
+
+    focused_history = _focus_message_history(message_history, question, "")
+    for item in focused_history:
+        if question and _matches_question(item, question):
+            continue
+        add_candidate(item, item, "message_history_recovered")
+
+    if not candidates:
+        return {
+            "detected": False,
+            "answer_raw": "",
+            "actual_answer": "",
+            "actual_answer_clean": "",
+            "source": "unknown",
+        }
+
+    selected = max(candidates, key=lambda item: len(item["actual_answer_clean"]))
+    selected["detected"] = True
+    return selected
+
+
+def _clear_unverified_answer_fields() -> dict[str, Any]:
+    return {
+        "answer": "",
+        "answer_raw": "",
+        "answer_normalized": "",
+        "actual_answer": "",
+        "actual_answer_clean": "",
+        "extraction_source": "unknown",
+        "extraction_source_detail": "no_verified_answer",
+        "extraction_confidence": 0.0,
+        "removed_followups": False,
+        "noise_lines_removed": 0,
+    }
 
 
 def _contains_baseline_menu(text: str) -> bool:
@@ -3678,7 +3811,11 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 else:
                     extraction_source_detail = "dom_payload"
             raw_history = dom_payload.get("history", [])
-            message_history, history_noise_removed = _clean_message_history(raw_history)
+            message_history, history_noise_removed = _clean_message_history(
+                raw_history,
+                question=test_case.question,
+                actual_answer=actual_answer_clean or actual_answer,
+            )
             message_history_clean = "\n".join(message_history).strip()
             noise_lines_removed += history_noise_removed
             structured_message_history_count = int(dom_payload.get("structured_message_history_count", 0) or 0)
@@ -3689,7 +3826,11 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                     "[HISTORY] no structured message history extracted; falling back to visible chat text scan"
                 )
                 visible_text = dom_payload.get("visible_chat_text", "")
-                message_history, history_noise_removed = _clean_message_history(visible_text.splitlines())
+                message_history, history_noise_removed = _clean_message_history(
+                    visible_text.splitlines(),
+                    question=test_case.question,
+                    actual_answer=actual_answer_clean or actual_answer,
+                )
                 message_history_clean = "\n".join(message_history).strip()
                 noise_lines_removed += history_noise_removed
                 runtime.logger.info("[HISTORY] visible chat text fallback used")
@@ -3699,11 +3840,44 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             runtime.logger.info("[HISTORY] fallback diff used: %s", fallback_diff_used)
 
             if not new_bot_response_detected:
+                recovered_payload = _recover_dom_response_candidate(
+                    test_case.question,
+                    last_answer_payload.get("answer_raw") or dom_answer,
+                    last_answer_payload,
+                    message_history,
+                )
+                if recovered_payload.get("detected") and submit_effect_verified and user_message_echo_verified:
+                    new_bot_response_detected = True
+                    answer_raw = str(recovered_payload.get("answer_raw") or "")
+                    actual_answer = str(recovered_payload.get("actual_answer") or "")
+                    actual_answer_clean = str(recovered_payload.get("actual_answer_clean") or "")
+                    answer_normalized = actual_answer_clean or _normalize_answer_text(answer_raw)
+                    answer = actual_answer_clean or answer_normalized
+                    extraction_source = "dom"
+                    extraction_source_detail = str(recovered_payload.get("source") or "dom_recovered_response")
+                    extraction_confidence = 0.9
+                    runtime.logger.info(
+                        "[ANSWER][DOM_RECOVERED_RESPONSE] source=%s len=%s",
+                        extraction_source_detail,
+                        len(actual_answer_clean or answer_normalized),
+                    )
+
+            if not new_bot_response_detected:
                 status = "failed"
                 input_failure_category = "answer_not_extracted"
                 reason = wait_result.reason
                 error_message = wait_result.reason
                 input_failure_reason = wait_result.reason
+                cleared = _clear_unverified_answer_fields()
+                answer = cleared["answer"]
+                answer_raw = cleared["answer_raw"]
+                answer_normalized = cleared["answer_normalized"]
+                actual_answer = cleared["actual_answer"]
+                actual_answer_clean = cleared["actual_answer_clean"]
+                extraction_source = cleared["extraction_source"]
+                extraction_source_detail = cleared["extraction_source_detail"]
+                extraction_confidence = float(cleared["extraction_confidence"])
+                removed_followups = bool(cleared["removed_followups"])
             elif answer_raw:
                 extraction_source = "dom"
                 extraction_confidence = 1.0

@@ -247,8 +247,8 @@ class TestBuildConversation:
         assert "Fullpage Screenshot:" in content
         assert "Chat Screenshot:" in content
         assert "Opened Footer Screenshot:" in content
-        assert "### Input Candidates" in content
-        assert "### Answer Extraction Debug" in content
+        assert "### Input Candidates (c01)" in content
+        assert "### Answer Extraction Debug (c01)" in content
 
     def test_conversation_empty_history(self):
         """Message History shows '(empty)' when no history is captured."""
@@ -258,7 +258,7 @@ class TestBuildConversation:
             results = [_make_result("c01")]
             paths = write_reports(config, results)
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
-        assert "### Message History" in content
+        assert "### Message History (c01)" in content
         assert "- (empty)" in content
 
     def test_conversation_populated_history(self):

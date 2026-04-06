@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from app.samsung_rubicon import (
+    _clear_unverified_answer_fields,
     _clean_bot_answer_candidate,
+    _clean_message_history,
     _dedupe_preserve_order,
     _is_noise_line,
     _looks_like_main_answer,
+    _recover_dom_response_candidate,
 )
 
 
@@ -50,3 +53,56 @@ def test_dedupe_preserve_order_keeps_first_unique_message_only():
         "답변입니다.",
         "추가 답변입니다.",
     ]
+
+
+def test_clean_message_history_focuses_current_turn_and_removes_followup_chips():
+    items = [
+        "반갑습니다 송제혁님 AI Chat과 함께 시작해 볼까요?",
+        "고객지원이 필요하신가요? Samsung AI CS Chat 을 클릭해주세요.",
+        "갤럭시 S24 배터리 교체는 어디서 할 수 있나요? , 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?",
+        "갤럭시 S24 배터리 교체는 삼성전자서비스 센터에서 받을 수 있어요.",
+        "가까운 서비스센터에서 바로 가능한가요?",
+        "배터리 교체 비용은 얼마나 나와요?",
+    ]
+
+    cleaned, noise_removed = _clean_message_history(
+        items,
+        question="갤럭시 S24 배터리 교체는 어디서 할 수 있나요?",
+        actual_answer="갤럭시 S24 배터리 교체는 삼성전자서비스 센터에서 받을 수 있어요.",
+    )
+
+    assert cleaned == [
+        "갤럭시 S24 배터리 교체는 어디서 할 수 있나요?",
+        "갤럭시 S24 배터리 교체는 삼성전자서비스 센터에서 받을 수 있어요.",
+    ]
+    assert noise_removed >= 1
+
+
+def test_recover_dom_response_candidate_uses_focused_history_when_wait_detection_failed():
+    message_history = [
+        "휴대폰 액정 수리 접수는 어떻게 하나요?",
+        "휴대폰 액정 수리는 삼성전자 서비스센터로 접수하면 돼요. 방문 접수가 가장 일반적이고, 상황에 따라 전화로 방문수리 예약도 가능합니다.",
+        "가장 빠른 방법: 서비스센터 방문",
+    ]
+
+    recovered = _recover_dom_response_candidate(
+        question="휴대폰 액정 수리 접수는 어떻게 하나요?",
+        dom_answer="",
+        last_answer_payload={"answer_raw": "", "actual_answer_clean": "", "extraction_source": "unknown"},
+        message_history=message_history,
+    )
+
+    assert recovered["detected"] is True
+    assert recovered["source"] == "message_history_recovered"
+    assert recovered["actual_answer_clean"].startswith("휴대폰 액정 수리는 삼성전자 서비스센터로 접수하면 돼요.")
+
+
+def test_clear_unverified_answer_fields_returns_empty_payload():
+    cleared = _clear_unverified_answer_fields()
+
+    assert cleared["answer"] == ""
+    assert cleared["answer_raw"] == ""
+    assert cleared["actual_answer"] == ""
+    assert cleared["actual_answer_clean"] == ""
+    assert cleared["extraction_source"] == "unknown"
+    assert cleared["extraction_source_detail"] == "no_verified_answer"

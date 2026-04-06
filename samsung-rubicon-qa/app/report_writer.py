@@ -52,13 +52,14 @@ def _build_conversation(run_results: list[RunResult]) -> str:
         "이 파일에 질문, 입력 검증 여부, 새 응답 여부, 실제 답변, 평가 결과, 스크린샷 경로를 함께 기록한다.",
     ]
 
-    for item in run_results:
+    for index, item in enumerate(run_results):
         pair = item.pair
         ev = item.evaluation
+        heading_suffix = f" ({pair.case_id})"
 
         lines.extend(
             [
-                "",
+                "" if index == 0 else "",
                 f"## {pair.case_id}",
                 "",
                 f"- Question: {pair.question}",
@@ -105,7 +106,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
                 f"- Fullpage Screenshot: {pair.full_screenshot_path or pair.after_answer_full_screenshot_path or '(none)'}",
                 f"- Chat Screenshot: {pair.chat_screenshot_path or '(none)'}",
                 "",
-                "### Input Candidates",
+                f"### Input Candidates{heading_suffix}",
                 "",
             ]
         )
@@ -122,7 +123,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
         lines.extend(
             [
                 "",
-                "### Answer Extraction Debug",
+                f"### Answer Extraction Debug{heading_suffix}",
                 "",
                 f"- selected_source={pair.extraction_source_detail or pair.extraction_source or 'unknown'}",
                 f"- raw_len={len(pair.answer_raw or '')}",
@@ -130,7 +131,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
                 f"- removed_followups={pair.removed_followups}",
                 f"- noise_lines_removed={pair.noise_lines_removed}",
                 "",
-                "### Message History",
+                f"### Message History{heading_suffix}",
                 "",
             ]
         )
@@ -141,9 +142,10 @@ def _build_conversation(run_results: list[RunResult]) -> str:
         else:
             lines.append("- (empty)")
 
-        lines.append("")
+        if index != len(run_results) - 1:
+            lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _build_summary(run_results: list[RunResult]) -> str:
