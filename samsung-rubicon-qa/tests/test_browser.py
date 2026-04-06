@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -77,4 +78,27 @@ def test_new_case_session_skips_storage_state_when_missing(tmp_path: Path):
     browser.new_context.assert_called_once_with(
         locale="ko-KR",
         viewport={"width": 1440, "height": 1200},
+    )
+
+
+def test_new_case_session_enables_video_only_in_debug_mode(tmp_path: Path):
+    config = build_config(tmp_path)
+    config = replace(config, capture_mode="debug", enable_video=True)
+    logger = Mock()
+    browser = Mock()
+    context = Mock()
+    page = Mock()
+    browser.new_context.return_value = context
+    context.new_page.return_value = page
+
+    manager = BrowserManager(config=config, logger=logger)
+    manager._browser = browser
+
+    manager.new_case_session("case-video")
+
+    browser.new_context.assert_called_once_with(
+        locale="ko-KR",
+        viewport={"width": 1440, "height": 1200},
+        record_video_dir=str(config.video_dir),
+        record_video_size={"width": 1440, "height": 1200},
     )

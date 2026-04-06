@@ -92,9 +92,17 @@ class TestLoadConfig:
         assert config.samsung_base_url == "https://www.samsung.com/sec/"
         assert config.headless is False
         assert config.max_questions == 5
+        assert config.capture_mode == "fail_only"
         assert config.enable_video is False
+        assert config.enable_screenshots is False
+        assert config.enable_fullpage_screenshots is False
+        assert config.enable_chatbox_screenshots is False
         assert config.enable_trace is False
-        assert config.enable_ocr_fallback is False
+        assert config.enable_ocr_on_failure is True
+        assert config.enable_ocr_always is False
+        assert config.enable_ocr_fallback is True
+        assert config.keep_only_failure_artifacts is True
+        assert config.max_screenshots_per_case == 2
         assert config.rubicon_force_activation is True
         assert config.rubicon_disable_sdk is False
         assert config.rubicon_max_input_candidates == 5
@@ -106,9 +114,17 @@ class TestLoadConfig:
             "HEADLESS": "false",
             "MAX_QUESTIONS": "10",
             "OPENAI_MODEL": "gpt-4o",
-            "ENABLE_VIDEO": "false",
             "ENABLE_TRACE": "false",
-            "ENABLE_OCR_FALLBACK": "true",
+            "RUBICON_CAPTURE_MODE": "debug",
+            "RUBICON_ENABLE_VIDEO": "true",
+            "RUBICON_ENABLE_SCREENSHOTS": "true",
+            "RUBICON_ENABLE_FULLPAGE_SCREENSHOTS": "true",
+            "RUBICON_ENABLE_CHATBOX_SCREENSHOTS": "true",
+            "RUBICON_ENABLE_OCR_ON_FAILURE": "true",
+            "RUBICON_ENABLE_OCR_ALWAYS": "true",
+            "RUBICON_UPLOAD_ARTIFACTS_ON_SUCCESS": "true",
+            "RUBICON_KEEP_ONLY_FAILURE_ARTIFACTS": "false",
+            "RUBICON_MAX_SCREENSHOTS_PER_CASE": "4",
             "RUBICON_CHAT_DEBUG": "true",
             "RUBICON_FORCE_ACTIVATION": "false",
             "RUBICON_DISABLE_SDK": "true",
@@ -120,14 +136,44 @@ class TestLoadConfig:
         assert config.headless is False
         assert config.max_questions == 10
         assert config.openai_model == "gpt-4o"
-        assert config.enable_video is False
+        assert config.capture_mode == "debug"
+        assert config.enable_video is True
+        assert config.video_recording_enabled is True
+        assert config.enable_screenshots is True
+        assert config.enable_fullpage_screenshots is True
+        assert config.enable_chatbox_screenshots is True
         assert config.enable_trace is False
         assert config.enable_ocr_fallback is True
+        assert config.enable_ocr_on_failure is True
+        assert config.enable_ocr_always is True
+        assert config.upload_artifacts_on_success is True
+        assert config.keep_only_failure_artifacts is False
+        assert config.max_screenshots_per_case == 4
         assert config.rubicon_chat_debug is True
         assert config.rubicon_force_activation is False
         assert config.rubicon_disable_sdk is True
         assert config.rubicon_max_input_candidates == 4
         assert config.rubicon_frame_rescan_rounds == 2
+
+    def test_lean_mode_forces_video_and_screenshots_off(self, tmp_path: Path):
+        env = {
+            "OPENAI_API_KEY": "sk-lean",
+            "RUBICON_CAPTURE_MODE": "lean",
+            "RUBICON_ENABLE_VIDEO": "true",
+            "RUBICON_ENABLE_SCREENSHOTS": "true",
+            "RUBICON_ENABLE_FULLPAGE_SCREENSHOTS": "true",
+            "RUBICON_ENABLE_CHATBOX_SCREENSHOTS": "true",
+            "RUBICON_ENABLE_OCR_ALWAYS": "true",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config(tmp_path)
+        assert config.capture_mode == "lean"
+        assert config.enable_video is False
+        assert config.video_recording_enabled is False
+        assert config.enable_screenshots is False
+        assert config.enable_fullpage_screenshots is False
+        assert config.enable_chatbox_screenshots is False
+        assert config.enable_ocr_always is False
 
     def test_project_root_defaults_to_package_parent(self):
         config = load_config()

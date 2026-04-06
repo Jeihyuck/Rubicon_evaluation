@@ -15,6 +15,21 @@ def _to_bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None:
+            return value
+    return None
+
+
+def _normalize_capture_mode(value: str | None) -> str:
+    normalized = str(value or "fail_only").strip().lower()
+    if normalized not in {"lean", "fail_only", "debug"}:
+        return "fail_only"
+    return normalized
+
+
 @dataclass(slots=True)
 class AppConfig:
     """All environment-driven configuration used by the application."""
@@ -40,6 +55,21 @@ class AppConfig:
     rubicon_before_send_screenshot: bool
     rubicon_opened_footer_screenshot: bool
     rubicon_after_answer_screenshot: bool
+    capture_mode: str = "fail_only"
+    enable_screenshots: bool = False
+    enable_fullpage_screenshots: bool = False
+    enable_chatbox_screenshots: bool = False
+    enable_ocr_on_failure: bool = True
+    enable_ocr_always: bool = False
+    save_before_send_on_success: bool = False
+    save_after_answer_on_success: bool = False
+    upload_artifacts_on_success: bool = False
+    keep_only_failure_artifacts: bool = True
+    max_screenshots_per_case: int = 2
+
+    @property
+    def video_recording_enabled(self) -> bool:
+        return self.capture_mode == "debug" and self.enable_video
 
     @property
     def artifacts_dir(self) -> Path:
@@ -104,6 +134,29 @@ def load_config(project_root: Path | None = None) -> AppConfig:
     if env_path.exists():
         load_dotenv(env_path)
 
+    capture_mode = _normalize_capture_mode(_first_env("RUBICON_CAPTURE_MODE"))
+    enable_video = _to_bool(_first_env("RUBICON_ENABLE_VIDEO", "ENABLE_VIDEO"), False)
+    enable_screenshots = _to_bool(_first_env("RUBICON_ENABLE_SCREENSHOTS"), False)
+    enable_fullpage_screenshots = _to_bool(_first_env("RUBICON_ENABLE_FULLPAGE_SCREENSHOTS"), False)
+    enable_chatbox_screenshots = _to_bool(_first_env("RUBICON_ENABLE_CHATBOX_SCREENSHOTS"), False)
+    enable_ocr_on_failure = _to_bool(_first_env("RUBICON_ENABLE_OCR_ON_FAILURE", "ENABLE_OCR_FALLBACK"), True)
+    enable_ocr_always = _to_bool(_first_env("RUBICON_ENABLE_OCR_ALWAYS"), False)
+    save_before_send_on_success = _to_bool(_first_env("RUBICON_SAVE_BEFORE_SEND_ON_SUCCESS", "RUBICON_BEFORE_SEND_SCREENSHOT"), False)
+    save_after_answer_on_success = _to_bool(_first_env("RUBICON_SAVE_AFTER_ANSWER_ON_SUCCESS", "RUBICON_AFTER_ANSWER_SCREENSHOT"), False)
+    upload_artifacts_on_success = _to_bool(_first_env("RUBICON_UPLOAD_ARTIFACTS_ON_SUCCESS"), False)
+    keep_only_failure_artifacts = _to_bool(_first_env("RUBICON_KEEP_ONLY_FAILURE_ARTIFACTS"), True)
+    max_screenshots_per_case = max(0, int(_first_env("RUBICON_MAX_SCREENSHOTS_PER_CASE") or "2"))
+
+    if capture_mode == "lean":
+        enable_video = False
+        enable_screenshots = False
+        enable_fullpage_screenshots = False
+        enable_chatbox_screenshots = False
+        enable_ocr_always = False
+    elif capture_mode == "fail_only":
+        enable_video = False
+        enable_ocr_always = False
+
     return AppConfig(
         project_root=resolved_root,
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
@@ -115,15 +168,26 @@ def load_config(project_root: Path | None = None) -> AppConfig:
         playwright_timeout_ms=int(os.getenv("PLAYWRIGHT_TIMEOUT_MS", "30000")),
         answer_stable_checks=int(os.getenv("ANSWER_STABLE_CHECKS", "3")),
         answer_stable_interval_sec=float(os.getenv("ANSWER_STABLE_INTERVAL_SEC", "1.0")),
-        enable_video=_to_bool(os.getenv("ENABLE_VIDEO"), False),
+        enable_video=enable_video,
         enable_trace=_to_bool(os.getenv("ENABLE_TRACE"), False),
-        enable_ocr_fallback=_to_bool(os.getenv("ENABLE_OCR_FALLBACK"), False),
+        enable_ocr_fallback=enable_ocr_on_failure or enable_ocr_always,
         rubicon_chat_debug=_to_bool(os.getenv("RUBICON_CHAT_DEBUG"), False),
         rubicon_force_activation=_to_bool(os.getenv("RUBICON_FORCE_ACTIVATION"), True),
         rubicon_disable_sdk=_to_bool(os.getenv("RUBICON_DISABLE_SDK"), False),
         rubicon_max_input_candidates=int(os.getenv("RUBICON_MAX_INPUT_CANDIDATES", "5")),
         rubicon_frame_rescan_rounds=int(os.getenv("RUBICON_FRAME_RESCAN_ROUNDS", "3")),
-        rubicon_before_send_screenshot=_to_bool(os.getenv("RUBICON_BEFORE_SEND_SCREENSHOT"), True),
-        rubicon_opened_footer_screenshot=_to_bool(os.getenv("RUBICON_OPENED_FOOTER_SCREENSHOT"), True),
-        rubicon_after_answer_screenshot=_to_bool(os.getenv("RUBICON_AFTER_ANSWER_SCREENSHOT"), True),
+        rubicon_before_send_screenshot=save_before_send_on_success,
+        rubicon_opened_footer_screenshot=_to_bool(_first_env("RUBICON_OPENED_FOOTER_SCREENSHOT"), False),
+        rubicon_after_answer_screenshot=save_after_answer_on_success,
+        capture_mode=capture_mode,
+        enable_screenshots=enable_screenshots,
+        enable_fullpage_screenshots=enable_fullpage_screenshots,
+        enable_chatbox_screenshots=enable_chatbox_screenshots,
+        enable_ocr_on_failure=enable_ocr_on_failure,
+        enable_ocr_always=enable_ocr_always,
+        save_before_send_on_success=save_before_send_on_success,
+        save_after_answer_on_success=save_after_answer_on_success,
+        upload_artifacts_on_success=upload_artifacts_on_success,
+        keep_only_failure_artifacts=keep_only_failure_artifacts,
+        max_screenshots_per_case=max_screenshots_per_case,
     )

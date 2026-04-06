@@ -242,13 +242,25 @@ class TestBuildConversation:
         assert "Answer Raw:" in content
         assert "Extraction Source:" in content
         assert "Message History Clean:" in content
+        assert "Failure Reason:" in content
+        assert "Screenshot Path:" in content
         assert "Before Send Screenshot:" in content
         assert "After Answer Screenshot:" in content
         assert "Fullpage Screenshot:" in content
         assert "Chat Screenshot:" in content
         assert "Opened Footer Screenshot:" in content
+        assert "Video Path:" in content
         assert "### Input Candidates (c01)" in content
         assert "### Answer Extraction Debug (c01)" in content
+
+    def test_conversation_allows_empty_artifact_paths_on_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [_make_result("c01")])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Screenshot Path: (none)" in content
+        assert "Video Path: (none)" in content
 
     def test_conversation_empty_history(self):
         """Message History shows '(empty)' when no history is captured."""

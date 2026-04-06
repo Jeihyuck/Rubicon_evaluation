@@ -245,6 +245,16 @@ HISTORY_ALWAYS_DROP_HINTS = [
 ]
 
 MIN_MAIN_ANSWER_LEN = 40
+MEANINGFUL_ANSWER_HINTS = [
+    "죄송",
+    "문의",
+    "구매",
+    "서비스센터",
+    "도와드리",
+    "안내드리",
+    "가능합니다",
+    "가능해요",
+]
 
 _KOREAN_DATE_RE = re.compile(r"\b20\d{2}년\s*\d{1,2}월\s*\d{1,2}일\b")
 _KOREAN_TIME_RE = re.compile(r"(?:오전|오후)\s*\d{1,2}:\d{2}")
@@ -313,6 +323,7 @@ class _RuntimeState:
     current_case_id: str = ""
     current_case_timestamp: str = ""
     latest_html_fragment_path: str = ""
+    current_screenshot_count: int = 0
 
 
 _RUNTIME: _RuntimeState | None = None
@@ -329,6 +340,88 @@ def _runtime() -> _RuntimeState:
     if _RUNTIME is None:
         raise RuntimeError("samsung_rubicon.configure_runtime() must be called before use")
     return _RUNTIME
+
+
+def _reset_case_artifact_state() -> None:
+    runtime = _runtime()
+    runtime.current_screenshot_count = 0
+    runtime.latest_html_fragment_path = ""
+
+
+def _has_failure_capture_budget(config: AppConfig) -> bool:
+    if config.capture_mode == "debug":
+        return True
+    return _runtime().current_screenshot_count < config.max_screenshots_per_case
+
+
+def _register_screenshot_capture() -> None:
+    runtime = _runtime()
+    if runtime.config.capture_mode != "debug":
+        runtime.current_screenshot_count += 1
+
+
+def _success_stage_enabled(stage: str, config: AppConfig) -> bool:
+    if config.capture_mode != "debug" or not config.enable_screenshots:
+        return False
+    if stage == "before_send":
+        return config.save_before_send_on_success or config.rubicon_before_send_screenshot
+    if stage == "after_answer":
+        return config.save_after_answer_on_success or config.rubicon_after_answer_screenshot
+    if stage == "opened_footer":
+        return config.rubicon_opened_footer_screenshot or config.enable_chatbox_screenshots
+    return True
+
+
+def _should_capture_stage(stage: str, *, case_failed: bool, config: AppConfig) -> bool:
+    if case_failed:
+        if config.capture_mode not in {"fail_only", "debug"}:
+            return False
+        if config.max_screenshots_per_case <= 0:
+            return False
+        return _has_failure_capture_budget(config)
+    return _success_stage_enabled(stage, config)
+
+
+def _should_capture_fullpage(*, case_failed: bool, config: AppConfig) -> bool:
+    if case_failed:
+        return config.capture_mode == "debug" and config.enable_fullpage_screenshots and _has_failure_capture_budget(config)
+    return config.capture_mode == "debug" and config.enable_fullpage_screenshots and config.enable_screenshots
+
+
+def _should_capture_chatbox(stage: str, *, case_failed: bool, config: AppConfig) -> bool:
+    if case_failed:
+        return _should_capture_stage(stage, case_failed=True, config=config)
+    if not _should_capture_stage(stage, case_failed=False, config=config):
+        return False
+    if stage == "opened_footer":
+        return config.rubicon_opened_footer_screenshot or config.enable_chatbox_screenshots
+    if stage == "before_send":
+        return config.save_before_send_on_success or config.rubicon_before_send_screenshot
+    if stage == "after_answer":
+        return config.save_after_answer_on_success or config.rubicon_after_answer_screenshot or config.enable_chatbox_screenshots
+    return config.enable_chatbox_screenshots
+
+
+def _is_meaningful_answer_text(text: str) -> bool:
+    normalized = _clean_bot_answer_candidate(text)
+    if not normalized:
+        return False
+    if _looks_like_main_answer(normalized):
+        return True
+    if len(normalized) >= 16:
+        return True
+    return any(hint in normalized for hint in MEANINGFUL_ANSWER_HINTS)
+
+
+def _should_run_ocr_fallback(dom_answer: str, new_bot_response_detected: bool, config: AppConfig) -> bool:
+    if config.enable_ocr_always:
+        return True
+    if not config.enable_ocr_on_failure:
+        return False
+    if not new_bot_response_detected:
+        return True
+    normalized = _clean_bot_answer_candidate(dom_answer)
+    return not _is_meaningful_answer_text(normalized)
 
 
 def _iter_scopes(page: Page) -> list[tuple[str, Page | Frame]]:
@@ -399,6 +492,8 @@ def _candidate_reason(candidate_state: dict[str, Any]) -> str:
     aria_label = str(candidate_state.get("aria_label", "")).lower()
     if "더이상 입력할 수 없습니다" in placeholder or "더이상 입력할 수 없습니다" in aria_label:
         return "placeholder_shell"
+    if _candidate_has_ready_hint(candidate_state):
+        return "allowed"
     if not candidate_state.get("editable"):
         return "not_editable"
     return "allowed"
@@ -408,6 +503,9 @@ def _grade_candidate_state(candidate_state: dict[str, Any]) -> tuple[str, str]:
     reason = _candidate_reason(candidate_state)
     if reason != "allowed":
         return "C", reason
+
+    if candidate_state.get("visible") and candidate_state.get("enabled") and _candidate_has_ready_hint(candidate_state):
+        return "B", "ready_signal"
 
     contenteditable = str(candidate_state.get("contenteditable", "")).lower()
     tag_name = str(candidate_state.get("tag_name", "")).lower()
@@ -2878,6 +2976,7 @@ def _capture_stage(
     stage: str,
     config: AppConfig,
     logger: Any,
+    case_failed: bool = False,
 ) -> tuple[str, str]:
     """Capture fullpage + chatbox screenshots for a named stage.
 
@@ -2891,22 +2990,29 @@ def _capture_stage(
     fp_str = ""
     cb_str = ""
 
-    try:
-        page.screenshot(path=str(fullpage_path), full_page=True)
-        fp_str = str(fullpage_path)
-    except Exception as exc:
-        logger.warning("stage %s fullpage screenshot failed: %s", stage, exc)
+    if not _should_capture_fullpage(case_failed=case_failed, config=config) and not _should_capture_chatbox(stage, case_failed=case_failed, config=config):
+        return "", ""
 
-    try:
-        if context is not None and context.container_locator is not None:
-            context.container_locator.screenshot(path=str(chatbox_path))
-        elif context is not None:
-            context.input_locator.screenshot(path=str(chatbox_path))
-        else:
-            page.screenshot(path=str(chatbox_path))
-        cb_str = str(chatbox_path)
-    except Exception as exc:
-        logger.warning("stage %s chatbox screenshot failed: %s", stage, exc)
+    if _should_capture_fullpage(case_failed=case_failed, config=config):
+        try:
+            page.screenshot(path=str(fullpage_path), full_page=True)
+            fp_str = str(fullpage_path)
+            _register_screenshot_capture()
+        except Exception as exc:
+            logger.warning("stage %s fullpage screenshot failed: %s", stage, exc)
+
+    if _should_capture_chatbox(stage, case_failed=case_failed, config=config):
+        try:
+            if context is not None and context.container_locator is not None:
+                context.container_locator.screenshot(path=str(chatbox_path))
+            elif context is not None and context.input_locator is not None:
+                context.input_locator.screenshot(path=str(chatbox_path))
+            else:
+                page.screenshot(path=str(chatbox_path))
+            cb_str = str(chatbox_path)
+            _register_screenshot_capture()
+        except Exception as exc:
+            logger.warning("stage %s chatbox screenshot failed: %s", stage, exc)
 
     if cb_str:
         logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, cb_str)
@@ -2922,16 +3028,10 @@ def capture_named_artifact(
     case_id: str,
     stage: str,
     config: AppConfig,
+    case_failed: bool = False,
 ) -> tuple[str, str]:
     runtime = _runtime()
-    enabled = True
-    if stage == "opened_footer":
-        enabled = config.rubicon_opened_footer_screenshot
-    elif stage == "before_send":
-        enabled = config.rubicon_before_send_screenshot
-    elif stage == "after_answer":
-        enabled = config.rubicon_after_answer_screenshot
-    if not enabled:
+    if not _should_capture_stage(stage, case_failed=case_failed, config=config):
         return "", ""
 
     if stage == "opened_footer" and context is not None and context.input_locator is not None:
@@ -2947,21 +3047,34 @@ def capture_named_artifact(
             target = context.input_locator
         fp_str = ""
         cb_str = ""
-        try:
-            page.screenshot(path=str(fullpage_path), full_page=True)
-            fp_str = str(fullpage_path)
-            runtime.logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, fp_str)
-        except Exception:
-            pass
-        try:
-            target.screenshot(path=str(chatbox_path))
-            cb_str = str(chatbox_path)
-            runtime.logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, cb_str)
-        except Exception:
-            pass
+        if _should_capture_fullpage(case_failed=case_failed, config=config):
+            try:
+                page.screenshot(path=str(fullpage_path), full_page=True)
+                fp_str = str(fullpage_path)
+                _register_screenshot_capture()
+                runtime.logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, fp_str)
+            except Exception:
+                pass
+        if _should_capture_chatbox(stage, case_failed=case_failed, config=config):
+            try:
+                target.screenshot(path=str(chatbox_path))
+                cb_str = str(chatbox_path)
+                _register_screenshot_capture()
+                runtime.logger.info("[ARTIFACT][SAVE] stage=%s path=%s", stage, cb_str)
+            except Exception:
+                pass
         return fp_str, cb_str
 
-    return _capture_stage(page, context, case_id, runtime.current_case_timestamp, stage, config, runtime.logger)
+    return _capture_stage(
+        page,
+        context,
+        case_id,
+        runtime.current_case_timestamp,
+        stage,
+        config,
+        runtime.logger,
+        case_failed=case_failed,
+    )
 
 
 def _capture_answer_screenshots(
@@ -3433,29 +3546,19 @@ def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: 
     chatbox_path = runtime.config.chatbox_dir / f"{timestamp}_{safe_case_id}.png"
     html_fragment_path = runtime.config.chatbox_dir / f"{timestamp}_{safe_case_id}.html"
 
-    try:
-        page.screenshot(path=str(fullpage_path), full_page=True)
-    except Exception as exc:
-        runtime.logger.exception("Failed to capture full page screenshot: %s", exc)
-        fullpage_path = None
-
-    try:
-        if context is not None and context.container_locator is not None:
-            context.container_locator.screenshot(path=str(chatbox_path))
-        elif context is not None:
-            context.input_locator.screenshot(path=str(chatbox_path))
-        else:
-            page.screenshot(path=str(chatbox_path))
-    except Exception as exc:
-        runtime.logger.exception("Failed to capture chat screenshot: %s", exc)
-        chatbox_path = None
-
-    if context is not None:
-        dom_payload = extract_dom_payload(context, html_fragment_path)
-        runtime.latest_html_fragment_path = dom_payload.get("html_fragment_path", "")
-        html_fragment_path = Path(runtime.latest_html_fragment_path) if runtime.latest_html_fragment_path else None
-    else:
-        html_fragment_path = None
+    fullpage_str, chatbox_str = _capture_stage(
+        page,
+        context,
+        case_id,
+        timestamp,
+        "failure_state",
+        runtime.config,
+        runtime.logger,
+        case_failed=True,
+    )
+    fullpage_path = Path(fullpage_str) if fullpage_str else None
+    chatbox_path = Path(chatbox_str) if chatbox_str else None
+    html_fragment_path = None
 
     runtime.logger.info("artifacts saved")
     return BrowserArtifacts(
@@ -3490,7 +3593,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     runtime = _runtime()
     runtime.current_case_id = test_case.id
     runtime.current_case_timestamp = artifact_timestamp()
-    runtime.latest_html_fragment_path = ""
+    _reset_case_artifact_state()
 
     context: ResolvedChatContext | None = None
     artifacts = BrowserArtifacts()
@@ -3632,6 +3735,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 test_case.id,
                 "opened_footer",
                 runtime.config,
+                case_failed=False,
             )
 
             ranked_candidates = collect_ranked_input_candidates(context, preferred_scope=context.scope_name)
@@ -3690,6 +3794,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 test_case.id,
                 "opened_footer",
                 runtime.config,
+                case_failed=False,
             )
 
             submission = submit_question(
@@ -3747,6 +3852,27 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             if not input_failure_category:
                 input_failure_category = "no_editable_candidate_after_transition"
                 input_failure_reason = "Submit flow never reached a verified editable input candidate"
+            if context is not None:
+                _, failure_capture_path = capture_named_artifact(
+                    page,
+                    context,
+                    test_case.id,
+                    "opened_footer",
+                    runtime.config,
+                    case_failed=True,
+                )
+                opened_footer_screenshot_path = opened_footer_screenshot_path or failure_capture_path
+            else:
+                opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
+                    page,
+                    None,
+                    test_case.id,
+                    runtime.current_case_timestamp,
+                    "failure_state",
+                    runtime.config,
+                    runtime.logger,
+                    case_failed=True,
+                )
             status = _status_from_failure_category(input_failure_category)
             reason = input_failure_reason
             error_message = input_failure_reason
@@ -3767,7 +3893,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             new_bot_response_detected = wait_result.new_bot_response_detected
             baseline_menu_detected = wait_result.baseline_menu_detected
 
-            if runtime.config.rubicon_after_answer_screenshot:
+            if _success_stage_enabled("after_answer", runtime.config):
                 (
                     answer_screenshot_paths,
                     after_answer_screenshot_path,
@@ -3782,9 +3908,7 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                     runtime.logger,
                 )
 
-            artifacts = capture_artifacts(page, context, test_case.id)
-
-            dom_payload = extract_dom_payload(context, artifacts.html_fragment_path, question=test_case.question)
+            dom_payload = extract_dom_payload(context, None, question=test_case.question)
             dom_answer = dom_payload.get("answer", "")
             last_answer_payload = extract_last_answer(context)
             selected_answer_raw = _select_report_answer(
@@ -3862,28 +3986,25 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                         len(actual_answer_clean or answer_normalized),
                     )
 
-            if not new_bot_response_detected:
-                status = "failed"
-                input_failure_category = "answer_not_extracted"
-                reason = wait_result.reason
-                error_message = wait_result.reason
-                input_failure_reason = wait_result.reason
-                cleared = _clear_unverified_answer_fields()
-                answer = cleared["answer"]
-                answer_raw = cleared["answer_raw"]
-                answer_normalized = cleared["answer_normalized"]
-                actual_answer = cleared["actual_answer"]
-                actual_answer_clean = cleared["actual_answer_clean"]
-                extraction_source = cleared["extraction_source"]
-                extraction_source_detail = cleared["extraction_source_detail"]
-                extraction_confidence = float(cleared["extraction_confidence"])
-                removed_followups = bool(cleared["removed_followups"])
-            elif answer_raw:
+            dom_candidate = actual_answer_clean or actual_answer or answer_normalized or answer_raw or dom_answer
+            dom_answer_verified = new_bot_response_detected and _is_meaningful_answer_text(dom_candidate)
+
+            if dom_answer_verified:
                 extraction_source = "dom"
                 extraction_confidence = 1.0
                 runtime.logger.info("DOM extracted")
-            elif runtime.config.enable_ocr_fallback and artifacts.chatbox_screenshot is not None:
-                ocr_text, confidence = extract_text_from_image(artifacts.chatbox_screenshot, runtime.logger)
+            elif _should_run_ocr_fallback(dom_candidate, new_bot_response_detected, runtime.config):
+                _, ocr_target_path = capture_named_artifact(
+                    page,
+                    context,
+                    test_case.id,
+                    "ocr_target",
+                    runtime.config,
+                    case_failed=True,
+                )
+                if ocr_target_path:
+                    after_answer_screenshot_path = after_answer_screenshot_path or ocr_target_path
+                ocr_text, confidence = extract_text_from_image(Path(ocr_target_path), runtime.logger) if ocr_target_path else ("", 0.0)
                 if ocr_text:
                     answer_raw = ocr_text
                     ocr_details = _clean_bot_answer_candidate_details(ocr_text)
@@ -3894,10 +4015,48 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                     extraction_source = "ocr"
                     extraction_source_detail = "ocr_fallback"
                     extraction_confidence = confidence
+                    ocr_text = answer_raw
                     ocr_confidence = confidence
                     removed_followups = bool(ocr_details.get("removed_followups", False))
                     noise_lines_removed += int(ocr_details.get("noise_lines_removed", 0) or 0)
                     runtime.logger.info("OCR fallback used")
+                else:
+                    after_answer_full_screenshot_path, failure_after_answer = capture_named_artifact(
+                        page,
+                        context,
+                        test_case.id,
+                        "after_answer",
+                        runtime.config,
+                        case_failed=True,
+                    )
+                    after_answer_screenshot_path = after_answer_screenshot_path or failure_after_answer
+
+            if not answer_raw:
+                status = "failed"
+                input_failure_category = "answer_not_extracted"
+                reason = wait_result.reason or "No answer text extracted"
+                error_message = reason
+                input_failure_reason = reason
+                cleared = _clear_unverified_answer_fields()
+                answer = cleared["answer"]
+                answer_raw = cleared["answer_raw"]
+                answer_normalized = cleared["answer_normalized"]
+                actual_answer = cleared["actual_answer"]
+                actual_answer_clean = cleared["actual_answer_clean"]
+                extraction_source = cleared["extraction_source"]
+                extraction_source_detail = cleared["extraction_source_detail"]
+                extraction_confidence = float(cleared["extraction_confidence"])
+                removed_followups = bool(cleared["removed_followups"])
+                if not after_answer_screenshot_path:
+                    _, failure_after_answer = capture_named_artifact(
+                        page,
+                        context,
+                        test_case.id,
+                        "after_answer",
+                        runtime.config,
+                        case_failed=True,
+                    )
+                    after_answer_screenshot_path = failure_after_answer
 
             if not answer_raw:
                 input_failure_category = "answer_not_extracted"
@@ -3912,6 +4071,16 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 reason = input_failure_reason
                 error_message = reason
                 fix_suggestion = CAPTURE_INVALID_FIX
+                if not after_answer_screenshot_path:
+                    _, failure_after_answer = capture_named_artifact(
+                        page,
+                        context,
+                        test_case.id,
+                        "after_answer",
+                        runtime.config,
+                        case_failed=True,
+                    )
+                    after_answer_screenshot_path = failure_after_answer
             elif status == "success":
                 reason = "Validated submitted question effect and detected a new bot response after baseline"
     except RuntimeError as exc:

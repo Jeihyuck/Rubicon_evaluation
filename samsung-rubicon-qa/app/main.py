@@ -31,6 +31,57 @@ def _print_case_summary(project_root: Path, result: RunResult) -> None:
     evaluation = result.evaluation
 
     print("=" * 50)
+
+
+def _delete_artifact(path_value: str) -> None:
+    if not path_value:
+        return
+    try:
+        Path(path_value).unlink(missing_ok=True)
+    except Exception:
+        return
+
+
+def _cleanup_success_artifacts(pair):
+    removable_paths = [
+        pair.full_screenshot_path,
+        pair.chat_screenshot_path,
+        pair.video_path,
+        pair.trace_path,
+        pair.html_fragment_path,
+        pair.opened_chat_screenshot_path,
+        pair.opened_full_screenshot_path,
+        pair.opened_footer_screenshot_path,
+        pair.before_send_screenshot_path,
+        pair.before_send_full_screenshot_path,
+        pair.after_send_screenshot_path,
+        pair.after_send_full_screenshot_path,
+        pair.after_answer_screenshot_path,
+        pair.after_answer_full_screenshot_path,
+        *pair.answer_screenshot_paths,
+    ]
+    for artifact_path in removable_paths:
+        _delete_artifact(artifact_path)
+
+    return replace(
+        pair,
+        full_screenshot_path="",
+        chat_screenshot_path="",
+        video_path="",
+        trace_path="",
+        html_fragment_path="",
+        opened_chat_screenshot_path="",
+        opened_full_screenshot_path="",
+        opened_footer_screenshot_path="",
+        before_send_screenshot_path="",
+        before_send_full_screenshot_path="",
+        after_send_screenshot_path="",
+        after_send_full_screenshot_path="",
+        after_answer_screenshot_path="",
+        after_answer_full_screenshot_path="",
+        answer_screenshot_paths=[],
+        after_answer_multi_page=False,
+    )
     print(f"CASE: {pair.case_id}")
     print(f"QUESTION: {pair.question}")
     print(f"INPUT DOM VERIFIED: {pair.input_dom_verified}")
@@ -87,10 +138,12 @@ def run(project_root: Path | None = None) -> list[RunResult]:
             timestamp = artifact_timestamp()
             safe_case_id = sanitize_filename(test_case.id)
             trace_target = config.trace_dir / f"{timestamp}_{safe_case_id}.zip" if config.enable_trace else None
-            video_target = config.video_dir / f"{timestamp}_{safe_case_id}.webm" if config.enable_video else None
+            video_target = config.video_dir / f"{timestamp}_{safe_case_id}.webm" if config.video_recording_enabled else None
 
             trace_path, video_path = session.close(trace_target=trace_target, video_target=video_target)
             pair = replace(pair, trace_path=trace_path, video_path=video_path)
+            if pair.status == "success" and config.keep_only_failure_artifacts:
+                pair = _cleanup_success_artifacts(pair)
 
             evaluation = evaluate_pair(config, test_case, pair, logger)
             run_result = RunResult(test_case=test_case, pair=pair, evaluation=evaluation)

@@ -17,6 +17,18 @@ jobs:
       PLAYWRIGHT_TIMEOUT_MS: "30000"
       ANSWER_STABLE_CHECKS: "3"
       ANSWER_STABLE_INTERVAL_SEC: "1.0"
+      RUBICON_CAPTURE_MODE: "fail_only"
+      RUBICON_ENABLE_VIDEO: "false"
+      RUBICON_ENABLE_SCREENSHOTS: "false"
+      RUBICON_ENABLE_FULLPAGE_SCREENSHOTS: "false"
+      RUBICON_ENABLE_CHATBOX_SCREENSHOTS: "false"
+      RUBICON_ENABLE_OCR_ON_FAILURE: "true"
+      RUBICON_ENABLE_OCR_ALWAYS: "false"
+      RUBICON_SAVE_BEFORE_SEND_ON_SUCCESS: "false"
+      RUBICON_SAVE_AFTER_ANSWER_ON_SUCCESS: "false"
+      RUBICON_UPLOAD_ARTIFACTS_ON_SUCCESS: "false"
+      RUBICON_KEEP_ONLY_FAILURE_ARTIFACTS: "true"
+      RUBICON_MAX_SCREENSHOTS_PER_CASE: "2"
       ENABLE_VIDEO: "false"
       ENABLE_TRACE: "false"
       ENABLE_OCR_FALLBACK: "false"
@@ -25,9 +37,9 @@ jobs:
       RUBICON_DISABLE_SDK: "false"
       RUBICON_MAX_INPUT_CANDIDATES: "5"
       RUBICON_FRAME_RESCAN_ROUNDS: "3"
-      RUBICON_OPENED_FOOTER_SCREENSHOT: "true"
-      RUBICON_BEFORE_SEND_SCREENSHOT: "true"
-      RUBICON_AFTER_ANSWER_SCREENSHOT: "true"
+      RUBICON_OPENED_FOOTER_SCREENSHOT: "false"
+      RUBICON_BEFORE_SEND_SCREENSHOT: "false"
+      RUBICON_AFTER_ANSWER_SCREENSHOT: "false"
     defaults:
       run:
         working-directory: samsung-rubicon-qa
@@ -47,7 +59,7 @@ jobs:
           fc-cache -fv
 
       - name: Install OCR system packages
-        if: env.ENABLE_OCR_FALLBACK == 'true'
+        if: env.RUBICON_ENABLE_OCR_ON_FAILURE == 'true' || env.RUBICON_ENABLE_OCR_ALWAYS == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-kor
@@ -58,7 +70,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install OCR Python dependencies
-        if: env.ENABLE_OCR_FALLBACK == 'true'
+        if: env.RUBICON_ENABLE_OCR_ON_FAILURE == 'true' || env.RUBICON_ENABLE_OCR_ALWAYS == 'true'
         run: |
           pip install Pillow pytesseract
 
@@ -71,11 +83,14 @@ jobs:
       - name: Run Samsung Rubicon QA
         run: python run.py
 
-      - name: Upload artifacts and reports
-        if: always()
+      - name: Upload artifacts on failure only
+        if: failure() || env.RUBICON_UPLOAD_ARTIFACTS_ON_SUCCESS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: samsung-rubicon-qa-output
           path: |
-            samsung-rubicon-qa/artifacts/
-            samsung-rubicon-qa/reports/
+            samsung-rubicon-qa/reports/latest_results.json
+            samsung-rubicon-qa/reports/latest_results.csv
+            samsung-rubicon-qa/reports/summary.md
+            samsung-rubicon-qa/reports/latest_conversation.md
+            samsung-rubicon-qa/artifacts/chatbox/

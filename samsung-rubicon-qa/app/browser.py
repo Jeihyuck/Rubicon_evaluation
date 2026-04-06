@@ -43,7 +43,7 @@ class CaseBrowserSession:
 
         self.context.close()
 
-        if self.config.enable_video and video_source is not None:
+        if self.config.video_recording_enabled and video_source is not None:
             raw_video_path = Path(video_source.path())
             if video_target is not None:
                 ensure_parent(video_target)
@@ -113,7 +113,7 @@ class BrowserManager:
         if self.config.samsung_storage_state_path.exists():
             self.logger.info("loading samsung storage state from %s", self.config.samsung_storage_state_path)
             context_kwargs["storage_state"] = str(self.config.samsung_storage_state_path)
-        if self.config.enable_video:
+        if self.config.video_recording_enabled:
             context_kwargs["record_video_dir"] = str(self.config.video_dir)
             context_kwargs["record_video_size"] = {"width": 1440, "height": 1200}
 
