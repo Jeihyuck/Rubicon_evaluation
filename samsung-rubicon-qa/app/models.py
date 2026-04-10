@@ -45,11 +45,17 @@ class ExtractedPair:
     noise_lines_removed: int = 0
     reason: str = ""
     error_message: str = ""
+    run_mode: str = "speed"
+    fast_path_used: bool = False
     full_screenshot_path: str = ""
     chat_screenshot_path: str = ""
+    submitted_chat_screenshot_path: str = ""
+    answered_chat_screenshot_path: str = ""
     video_path: str = ""
     trace_path: str = ""
     html_fragment_path: str = ""
+    evidence_markdown_path: str = ""
+    evidence_json_path: str = ""
     fix_suggestion: str = ""
     input_dom_verified: bool = False
     submit_effect_verified: bool = False
@@ -171,10 +177,14 @@ class RunResult:
             "status": self.pair.status,
             "error_message": self.pair.error_message,
             "reason": self.pair.reason,
+            "run_mode": self.pair.run_mode,
+            "fast_path_used": self.pair.fast_path_used,
             "fix_suggestion": self.pair.fix_suggestion or self.evaluation.fix_suggestion,
             "message_history": self.pair.message_history,
             "message_history_clean": self.pair.message_history_clean,
             "html_fragment_path": self.pair.html_fragment_path,
+            "evidence_markdown_path": self.pair.evidence_markdown_path,
+            "evidence_json_path": self.pair.evidence_json_path,
             "extraction_source": self.pair.extraction_source,
             "extraction_source_detail": self.pair.extraction_source_detail,
             "removed_followups": self.pair.removed_followups,
@@ -207,7 +217,9 @@ class RunResult:
             "availability_status": self.pair.availability_status,
             "input_candidates_debug": self.pair.input_candidates_debug,
             "before_send_screenshot_path": self.pair.before_send_screenshot_path,
+            "submitted_chat_screenshot_path": self.pair.submitted_chat_screenshot_path,
             "after_send_screenshot_path": self.pair.after_send_screenshot_path,
+            "answered_chat_screenshot_path": self.pair.answered_chat_screenshot_path,
             "after_answer_screenshot_path": self.pair.after_answer_screenshot_path,
             "answer_screenshot_paths": self.pair.answer_screenshot_paths,
             "after_answer_multi_page": self.pair.after_answer_multi_page,

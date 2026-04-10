@@ -50,6 +50,10 @@ FOLLOW_UP_SPLIT_MARKERS = [
     "AI 생성 메시지는 부정확할 수 있습니다",
 ]
 
+COMMERCE_TAIL_SPLIT_MARKERS = [
+    "더 알아보기",
+]
+
 META_PREFIX_PATTERNS = [
     r"^자세한 내용을 보려면 Enter를 누르세요[.\s,:-]*",
     r"^리치 텍스트 메시지[.\s,:-]*",
@@ -86,6 +90,15 @@ USER_MESSAGE_SELECTORS = [
     "[class*='sent' i]",
 ]
 
+HISTORY_DUMP_HINTS = [
+    "Samsung AI CS Chat",
+    "고객지원이 필요하신가요?",
+    "안녕하세요",
+    "프롬프트 생성 중 오류가 발생했습니다",
+    "채팅을 다시 시작하세요",
+    "삼성닷컴에서 어떤 제품들을 구매할 수 있나요?",
+]
+
 
 def normalize_text_for_diff(text: str) -> str:
     sanitized = re.sub(r"[\u200e\u200f\u202a-\u202e\ufeff]", "", str(text or ""))
@@ -98,6 +111,55 @@ def _static_ui_normalized() -> set[str]:
 
 def _normalize_multiline_text(text: str) -> str:
     return "\n".join(line.strip() for line in str(text or "").splitlines() if line.strip())
+
+
+def _looks_like_product_card(text: str) -> bool:
+    normalized = normalize_text_for_diff(text)
+    if not normalized:
+        return False
+
+    has_cta = any(marker in normalized for marker in COMMERCE_TAIL_SPLIT_MARKERS)
+    has_price = bool(re.search(r"\b\d[\d,]*\s*원\b", normalized))
+    has_rating = "⭐" in normalized or bool(re.search(r"\b평점\b|\b리뷰\b", normalized))
+    has_model_code = bool(re.search(r"\b[A-Z]{2,}-[A-Z0-9]{3,}\b", normalized))
+
+    return has_cta and (has_price or has_rating or has_model_code)
+
+
+def _looks_like_product_title(text: str) -> bool:
+    normalized = normalize_text_for_diff(text)
+    if not normalized:
+        return False
+
+    has_model_code = bool(re.search(r"\b(?:SM|KQ|NT|EF|GP|EP)-?[A-Z0-9]{3,}\b", normalized))
+    has_title_hint = any(marker in normalized for marker in ("자급제", "전용컬러", "삼성 강남", "삼성닷컴"))
+    has_sentence_ending = normalized.endswith((".", "다", "요", "니다"))
+    looks_like_single_title = "\n" not in normalized and len(normalized.split()) <= 12
+
+    return looks_like_single_title and (has_model_code or has_title_hint) and not has_sentence_ending
+
+
+def _trim_product_card_tail(text: str) -> str:
+    normalized = normalize_text_for_diff(text)
+    if not normalized:
+        return ""
+    if not _looks_like_product_card(normalized) and "더 알아보기" not in normalized:
+        return normalized
+
+    for marker in COMMERCE_TAIL_SPLIT_MARKERS:
+        marker_index = normalized.find(marker)
+        if marker_index < 0:
+            continue
+        prefix = normalized[:marker_index].rstrip()
+        sentence_break = max(prefix.rfind(". "), prefix.rfind("다 "), prefix.rfind("요 "), prefix.rfind("니다 "))
+        if sentence_break >= 0:
+            prefix = prefix[: sentence_break + 1].rstrip()
+        price_match = re.search(r"\b\d[\d,]*\s*원\b", prefix)
+        if price_match:
+            prefix = prefix[: price_match.start()].rstrip()
+        if prefix and not _looks_like_product_card(prefix):
+            return prefix
+    return normalized
 
 
 def _strip_meta_text(text: str) -> str:
@@ -124,6 +186,7 @@ def _strip_meta_text(text: str) -> str:
     cleaned = re.sub(r"(?:AM|PM)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"[0-9]{1,2}:[0-9]{2}(?:\s?[AP]M)?", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r",?\s*[0-9]{4}년\s*[0-9]{1,2}월\s*[0-9]{1,2}일\s*에\s*(?:수신됨|전송됨)", " ", cleaned)
+    cleaned = _trim_product_card_tail(cleaned)
     return " ".join(cleaned.split())
 
 
@@ -152,12 +215,32 @@ def _contains_embedded_static_ui_text(text: str) -> bool:
     return any(static_text in normalized_lower for static_text in _static_ui_normalized() if static_text and static_text != normalized_lower)
 
 
+def looks_like_chat_history_dump(text: str) -> bool:
+    normalized = _strip_meta_text(text)
+    if not normalized or len(normalized) < 120:
+        return False
+
+    hint_count = sum(1 for hint in HISTORY_DUMP_HINTS if hint in normalized)
+    question_like_count = normalized.count("?") + normalized.count("요?")
+
+    if hint_count >= 2:
+        return True
+    if hint_count >= 1 and question_like_count >= 2:
+        return True
+    if _contains_embedded_static_ui_text(normalized) and question_like_count >= 2:
+        return True
+
+    return False
+
+
 def remove_static_ui_segments(segments: list[str]) -> list[str]:
     filtered: list[str] = []
     seen: set[str] = set()
     for segment in segments:
         normalized = _strip_meta_text(segment)
         if not normalized or is_static_ui_text(normalized):
+            continue
+        if looks_like_chat_history_dump(normalized):
             continue
         if len(normalized) < 6:
             continue
@@ -279,7 +362,7 @@ def extract_clean_text_from_message_node(node: dict[str, Any]) -> str:
     options = find_text_containing_descendants(node)
     if isinstance(node, dict):
         wrapper_text = normalize_text_for_diff(node.get("wrapperText", ""))
-        if wrapper_text:
+        if wrapper_text and not looks_like_chat_history_dump(wrapper_text):
             options.append(wrapper_text)
 
     best_text = ""
@@ -419,6 +502,8 @@ def choose_best_answer_segment(segments: list[str]) -> str:
         normalized = _strip_meta_text(segment)
         if not normalized:
             continue
+        if looks_like_chat_history_dump(normalized):
+            continue
         sentence_like_count = sum(normalized.count(marker) for marker in (". ", "다. ", "요. ", "니다. "))
         score = len(normalized) + (index * 2)
         if len(normalized.split()) >= 5:
@@ -431,6 +516,10 @@ def choose_best_answer_segment(segments: list[str]) -> str:
             score += 10
         if normalized.endswith((".", "다", "요", "니다")):
             score += 4
+        if _looks_like_product_card(normalized):
+            score -= 80
+        if _looks_like_product_title(normalized):
+            score -= 70
         if normalized.endswith("?"):
             score -= 30
         if len(normalized) <= 40 and normalized.endswith("?"):

@@ -29,11 +29,11 @@ class CaseBrowserSession:
     def close(self, trace_target: Path | None = None, video_target: Path | None = None) -> tuple[str, str]:
         """Stop tracing, close the context, and move the recorded video if present."""
 
-        video_source: Any = self.page.video
+        video_source: Any = self.page.video if self.config.video_recording_enabled else None
         trace_path = ""
         video_path = ""
 
-        if self.config.enable_trace:
+        if self.config.trace_recording_enabled:
             if trace_target is not None:
                 ensure_parent(trace_target)
                 self.context.tracing.stop(path=str(trace_target))
@@ -105,14 +105,19 @@ class BrowserManager:
 
         if self._browser is None:
             raise RuntimeError("BrowserManager.start() must be called first")
+        if not self.config.samsung_storage_state_path.exists():
+            raise FileNotFoundError(
+                "Samsung login storage state is required but missing: "
+                f"{self.config.samsung_storage_state_path}. "
+                "Complete samsung.com/sec login via noVNC and save storage state first."
+            )
 
         context_kwargs: dict[str, Any] = {
             "locale": self.config.default_locale,
             "viewport": {"width": 1440, "height": 1200},
         }
-        if self.config.samsung_storage_state_path.exists():
-            self.logger.info("loading samsung storage state from %s", self.config.samsung_storage_state_path)
-            context_kwargs["storage_state"] = str(self.config.samsung_storage_state_path)
+        self.logger.info("loading samsung storage state from %s", self.config.samsung_storage_state_path)
+        context_kwargs["storage_state"] = str(self.config.samsung_storage_state_path)
         if self.config.video_recording_enabled:
             context_kwargs["record_video_dir"] = str(self.config.video_dir)
             context_kwargs["record_video_size"] = {"width": 1440, "height": 1200}
@@ -122,7 +127,7 @@ class BrowserManager:
         page = context.new_page()
         page.set_default_timeout(self.config.playwright_timeout_ms)
 
-        if self.config.enable_trace:
+        if self.config.trace_recording_enabled:
             context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         return CaseBrowserSession(case_id=case_id, context=context, page=page, config=self.config)

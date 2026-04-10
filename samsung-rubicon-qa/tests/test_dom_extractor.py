@@ -10,6 +10,7 @@ from app.dom_extractor import (
     extract_clean_text_from_message_node,
     filter_out_static_ui_text,
     is_static_ui_text,
+    looks_like_chat_history_dump,
     normalize_text_for_diff,
 )
 
@@ -59,6 +60,22 @@ class TestStaticUiFiltering:
         )
         assert _strip_meta_text(text) == "갤럭시 S24 배터리 교체는 삼성전자서비스 센터에서 진행할 수 있어요."
 
+    def test_product_card_tail_is_stripped_from_answer(self):
+        text = (
+            "갤럭시 S24는 6.2형 디스플레이와 4,000mAh 배터리를 제공합니다. "
+            "갤럭시 S24 자급제 (SM-S921N) ⭐ 4.8 1,155,000원 44,000원 할인 더 알아보기"
+        )
+        assert _strip_meta_text(text) == "갤럭시 S24는 6.2형 디스플레이와 4,000mAh 배터리를 제공합니다."
+
+    def test_chat_history_dump_is_detected(self):
+        text = (
+            "4월 9일 (목) 첨부 Samsung AI CS Chat 안녕하세요 송제혁님 "
+            "삼성닷컴에서 어떤 제품들을 구매할 수 있나요? 프롬프트 생성 중 오류가 발생했습니다. "
+            "채팅을 다시 시작하세요. 갤럭시 S26 울트라의 디스플레이 크기와 카메라 구성 그리고 배터리 같은 핵심 사양을 알려주세요?"
+        )
+
+        assert looks_like_chat_history_dump(text) is True
+
 
 class TestDiffHelpers:
     def test_compute_new_text_segments(self):
@@ -104,6 +121,41 @@ class TestDiffHelpers:
         assert best == (
             "갤럭시 S24 배터리 교체는 삼성전자서비스 센터에서 진행할 수 있어요. "
             "가까운 센터에 방문 접수로 배터리 점검 후 교체가 가능합니다."
+        )
+
+    def test_choose_best_answer_segment_penalizes_product_card_snippet(self):
+        segments = [
+            "갤럭시 S24 자급제 (SM-S921N) ⭐ 4.8 1,155,000원 44,000원 할인 더 알아보기",
+            "갤럭시 S24와 S24+의 가장 큰 차이는 화면 크기와 배터리 용량입니다.",
+        ]
+        best = choose_best_answer_segment(segments)
+        assert best == "갤럭시 S24와 S24+의 가장 큰 차이는 화면 크기와 배터리 용량입니다."
+
+    def test_choose_best_answer_segment_penalizes_product_title_only(self):
+        segments = [
+            "갤럭시 S26 울트라 자급제 (삼성닷컴/삼성 강남 전용컬러) (SM-S948NZDWKOO)",
+            "카메라와 화면 그리고 S펜 기준으로 보면, S26 울트라는 줌과 S펜까지 포함된 올인원이고 S26+는 큰 화면 대비 휴대성이 더 좋습니다.",
+        ]
+        best = choose_best_answer_segment(segments)
+        assert best == "카메라와 화면 그리고 S펜 기준으로 보면, S26 울트라는 줌과 S펜까지 포함된 올인원이고 S26+는 큰 화면 대비 휴대성이 더 좋습니다."
+
+    def test_choose_best_answer_segment_ignores_chat_history_dump(self):
+        segments = [
+            (
+                "4월 9일 (목) 첨부 Samsung AI CS Chat 안녕하세요 송제혁님 "
+                "삼성닷컴에서 어떤 제품들을 구매할 수 있나요? 프롬프트 생성 중 오류가 발생했습니다. "
+                "채팅을 다시 시작하세요. 갤럭시 S26 울트라의 디스플레이 크기와 카메라 구성 그리고 배터리 같은 핵심 사양을 알려주세요?"
+            ),
+            (
+                "갤럭시 버즈3 프로는 배터리가 케이스 포함 최대 26시간 노캔 켜짐 기준, "
+                "방수는 IP57, 오디오는 2-way 스피커와 적응형 노이즈 캔슬링이 핵심이에요."
+            ),
+        ]
+
+        best = choose_best_answer_segment(segments)
+        assert best == (
+            "갤럭시 버즈3 프로는 배터리가 케이스 포함 최대 26시간 노캔 켜짐 기준, "
+            "방수는 IP57, 오디오는 2-way 스피커와 적응형 노이즈 캔슬링이 핵심이에요."
         )
 
 

@@ -44,6 +44,7 @@ def _make_config() -> AppConfig:
         rubicon_before_send_screenshot=True,
         rubicon_opened_footer_screenshot=True,
         rubicon_after_answer_screenshot=True,
+        run_mode="standard",
     )
 
 

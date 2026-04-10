@@ -11,7 +11,7 @@ from app.csv_loader import load_test_cases
 from app.evaluator import evaluate_pair
 from app.logger import create_logger
 from app.models import RunResult
-from app.report_writer import write_reports
+from app.report_writer import format_case_console_block, write_reports
 from app.samsung_rubicon import configure_runtime, run_single_case
 from app.utils import artifact_timestamp, sanitize_filename
 
@@ -27,10 +27,8 @@ def _display_path(project_root: Path, value: str) -> str:
 
 
 def _print_case_summary(project_root: Path, result: RunResult) -> None:
-    pair = result.pair
-    evaluation = result.evaluation
-
-    print("=" * 50)
+    del project_root
+    print(format_case_console_block(result))
 
 
 def _delete_artifact(path_value: str) -> None:
@@ -82,37 +80,6 @@ def _cleanup_success_artifacts(pair):
         answer_screenshot_paths=[],
         after_answer_multi_page=False,
     )
-    print(f"CASE: {pair.case_id}")
-    print(f"QUESTION: {pair.question}")
-    print(f"INPUT DOM VERIFIED: {pair.input_dom_verified}")
-    print(f"SUBMIT EFFECT VERIFIED: {pair.submit_effect_verified}")
-    print(f"INPUT VERIFIED: {pair.input_verified}")
-    if pair.input_method_used:
-        print(f"INPUT METHOD: {pair.input_method_used}")
-    print(f"SUBMIT METHOD USED: {pair.submit_method_used}")
-    print(f"USER MESSAGE ECHO VERIFIED: {pair.user_message_echo_verified}")
-    print(f"NEW BOT RESPONSE DETECTED: {pair.new_bot_response_detected}")
-    if pair.status in {"invalid_capture", "failed"}:
-        print(f"STATUS: {pair.status}")
-        if pair.input_failure_category:
-            print(f"INPUT FAILURE CATEGORY: {pair.input_failure_category}")
-        print(f"REASON: {pair.reason or evaluation.reason}")
-    else:
-        print(f"BASELINE MENU DETECTED: {pair.baseline_menu_detected}")
-        print(f"ANSWER: {pair.answer}")
-        print(f"OVERALL SCORE: {evaluation.overall_score:.2f}")
-        print(f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}")
-    print("CHECK FIRST: reports/latest_conversation.md")
-    if pair.opened_footer_screenshot_path:
-        print(f"OPENED FOOTER SCREENSHOT: {_display_path(project_root, pair.opened_footer_screenshot_path)}")
-    if pair.before_send_screenshot_path:
-        print(f"BEFORE SEND SCREENSHOT: {_display_path(project_root, pair.before_send_screenshot_path)}")
-    if pair.answer_screenshot_paths:
-        display_paths = ", ".join(_display_path(project_root, path) for path in pair.answer_screenshot_paths)
-        print(f"AFTER ANSWER SCREENSHOTS: {display_paths}")
-    elif pair.after_answer_screenshot_path:
-        print(f"AFTER ANSWER SCREENSHOTS: {_display_path(project_root, pair.after_answer_screenshot_path)}")
-    print("=" * 50)
 
 
 def run(project_root: Path | None = None) -> list[RunResult]:
@@ -124,7 +91,11 @@ def run(project_root: Path | None = None) -> list[RunResult]:
     logger.info("app start")
     logger.info("config loaded")
 
-    test_cases = load_test_cases(config.questions_csv_path, max_questions=config.max_questions)
+    test_cases = load_test_cases(
+        config.questions_csv_path,
+        max_questions=config.max_questions,
+        selected_case_ids=config.selected_case_ids,
+    )
     browser_manager = BrowserManager(config=config, logger=logger)
     browser_manager.start()
     configure_runtime(config, logger)

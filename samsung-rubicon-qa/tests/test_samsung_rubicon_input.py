@@ -18,6 +18,7 @@ from app.samsung_rubicon import (
     configure_runtime,
     enter_question_with_verification,
     submit_question,
+    wait_for_answer_completion,
     wait_for_new_bot_response,
 )
 
@@ -354,3 +355,31 @@ def test_select_report_answer_falls_back_to_dom_when_wait_answer_missing():
     selected = _select_report_answer("", dom_answer, True)
 
     assert selected == dom_answer
+
+
+def test_wait_for_answer_completion_uses_fast_exit_for_meaningful_stable_answer(tmp_path):
+    configure_runtime(_make_config(), create_logger(tmp_path / "runtime-fast-answer.log"))
+
+    class _Scope:
+        def wait_for_timeout(self, _: int) -> None:
+            return None
+
+    context = SimpleNamespace(scope=_Scope(), baseline_bot_count=0, baseline_bot_messages=[])
+    candidate_payload = {
+        "current_bot_count": 1,
+        "bot_count_increased": True,
+        "new_bot_segments": [],
+        "diff_segments": [],
+        "strict_candidates": ["배터리 교체는 가까운 삼성전자서비스 센터에서 점검 후 진행할 수 있으며 방문 접수가 가장 빠릅니다."],
+        "fallback_candidates": [],
+        "answer": "배터리 교체는 가까운 삼성전자서비스 센터에서 점검 후 진행할 수 있으며 방문 접수가 가장 빠릅니다.",
+    }
+
+    with (
+        patch("app.samsung_rubicon.build_post_baseline_answer_candidates", side_effect=[candidate_payload, candidate_payload]),
+        patch("app.samsung_rubicon._loading_visible", return_value=False),
+    ):
+        result = wait_for_answer_completion(context, question="배터리 교체는 어디서 하나요?")
+
+    assert result.new_bot_response_detected is True
+    assert "삼성전자서비스 센터" in result.answer

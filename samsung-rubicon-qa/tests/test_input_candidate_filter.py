@@ -108,8 +108,8 @@ def test_ready_hint_detected_from_chat_message_aria():
     grade, reason = _grade_candidate_state(candidate)
     assert _candidate_has_ready_hint(candidate) is True
     assert _is_ready_composer_candidate(candidate) is True
-    assert grade == "B"
-    assert reason == "ready_signal"
+    assert grade == "C"
+    assert reason == "not_final_target"
 
 
 def test_candidate_debug_line_tolerates_missing_grade_and_reason():

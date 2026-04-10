@@ -12,16 +12,24 @@ def _parse_keywords(raw: str) -> list[str]:
     return [item.strip() for item in raw.split("|") if item.strip()]
 
 
-def load_test_cases(csv_path: Path, max_questions: int | None = None) -> list[TestCase]:
+def load_test_cases(
+    csv_path: Path,
+    max_questions: int | None = None,
+    selected_case_ids: list[str] | None = None,
+) -> list[TestCase]:
     """Load test cases from the configured CSV file."""
 
     cases: list[TestCase] = []
+    selected = {case_id.strip() for case_id in (selected_case_ids or []) if case_id.strip()}
     with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
+            case_id = row["id"].strip()
+            if selected and case_id not in selected:
+                continue
             cases.append(
                 TestCase(
-                    id=row["id"].strip(),
+                    id=case_id,
                     category=row["category"].strip(),
                     locale=row.get("locale", "ko-KR").strip() or "ko-KR",
                     page_url=row.get("page_url", "https://www.samsung.com/sec/").strip(),

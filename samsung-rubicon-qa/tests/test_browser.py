@@ -65,25 +65,23 @@ def test_new_case_session_skips_storage_state_when_missing(tmp_path: Path):
     config = build_config(tmp_path)
     logger = Mock()
     browser = Mock()
-    context = Mock()
-    page = Mock()
-    browser.new_context.return_value = context
-    context.new_page.return_value = page
 
     manager = BrowserManager(config=config, logger=logger)
     manager._browser = browser
 
-    manager.new_case_session("case-2")
-
-    browser.new_context.assert_called_once_with(
-        locale="ko-KR",
-        viewport={"width": 1440, "height": 1200},
-    )
+    try:
+        manager.new_case_session("case-2")
+    except FileNotFoundError as exc:
+        assert str(config.samsung_storage_state_path) in str(exc)
+    else:
+        raise AssertionError("expected FileNotFoundError when storage state is missing")
 
 
 def test_new_case_session_enables_video_only_in_debug_mode(tmp_path: Path):
     config = build_config(tmp_path)
-    config = replace(config, capture_mode="debug", enable_video=True)
+    config = replace(config, run_mode="debug", capture_mode="debug", enable_video=True)
+    config.ensure_directories()
+    config.samsung_storage_state_path.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
     logger = Mock()
     browser = Mock()
     context = Mock()
@@ -99,6 +97,48 @@ def test_new_case_session_enables_video_only_in_debug_mode(tmp_path: Path):
     browser.new_context.assert_called_once_with(
         locale="ko-KR",
         viewport={"width": 1440, "height": 1200},
+        storage_state=str(config.samsung_storage_state_path),
         record_video_dir=str(config.video_dir),
         record_video_size={"width": 1440, "height": 1200},
     )
+
+
+def test_new_case_session_skips_video_and_trace_outside_debug(tmp_path: Path):
+    config = build_config(tmp_path)
+    config = replace(config, run_mode="speed", enable_video=True, enable_trace=True)
+    config.ensure_directories()
+    config.samsung_storage_state_path.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    logger = Mock()
+    browser = Mock()
+    context = Mock()
+    page = Mock()
+    browser.new_context.return_value = context
+    context.new_page.return_value = page
+
+    manager = BrowserManager(config=config, logger=logger)
+    manager._browser = browser
+
+    manager.new_case_session("case-speed")
+
+    browser.new_context.assert_called_once_with(
+        locale="ko-KR",
+        viewport={"width": 1440, "height": 1200},
+        storage_state=str(config.samsung_storage_state_path),
+    )
+    context.tracing.start.assert_not_called()
+
+
+def test_case_session_close_skips_trace_and_video_when_disabled(tmp_path: Path):
+    config = build_config(tmp_path)
+    context = Mock()
+    page = Mock()
+    page.video = None
+    session = BrowserManager(config=config, logger=Mock())
+    case_session = session.new_case_session if False else None
+    from app.browser import CaseBrowserSession
+
+    result = CaseBrowserSession(case_id="case-close", context=context, page=page, config=config).close()
+
+    assert result == ("", "")
+    context.tracing.stop.assert_not_called()
+    context.close.assert_called_once()

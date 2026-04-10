@@ -110,6 +110,28 @@ def test_load_test_cases_default_locale():
         assert cases[0].locale == "ko-KR"
 
 
+def test_load_test_cases_selected_case_ids():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_path = Path(tmpdir) / "questions.csv"
+        rows = [
+            {
+                "id": f"case0{i}",
+                "category": "test",
+                "locale": "ko-KR",
+                "page_url": "https://www.samsung.com/sec/",
+                "question": f"질문 {i}",
+                "expected_keywords": "",
+                "forbidden_keywords": "",
+            }
+            for i in range(1, 5)
+        ]
+        _write_csv(csv_path, rows)
+
+        cases = load_test_cases(csv_path, selected_case_ids=["case02", "case04"])
+
+        assert [case.id for case in cases] == ["case02", "case04"]
+
+
 def test_load_real_questions_csv():
     """Smoke-test that the bundled questions.csv can be parsed."""
     csv_path = Path(__file__).resolve().parent.parent / "testcases" / "questions.csv"

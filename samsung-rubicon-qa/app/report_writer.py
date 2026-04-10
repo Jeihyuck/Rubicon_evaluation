@@ -28,8 +28,8 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
         writer.writeheader()
         writer.writerows(flat_rows)
 
-    summary_path.write_text(_build_summary(run_results), encoding="utf-8")
-    _write_latest_conversation(run_results, conversation_path)
+    summary_path.write_text(_build_summary(run_results, config), encoding="utf-8")
+    _write_latest_conversation(run_results, conversation_path, config)
     return {
         "json": str(json_path),
         "csv": str(csv_path),
@@ -38,11 +38,45 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
     }
 
 
-def _write_latest_conversation(results: list[RunResult], path) -> None:
-    path.write_text(_build_conversation(results), encoding="utf-8")
+def _write_latest_conversation(results: list[RunResult], path, config: AppConfig) -> None:
+    path.write_text(_build_conversation(results, config), encoding="utf-8")
 
 
-def _build_conversation(run_results: list[RunResult]) -> str:
+def _show_detailed_case(item: RunResult) -> bool:
+    return item.pair.status != "success" or item.pair.run_mode == "debug"
+
+
+def format_case_console_block(result: RunResult) -> str:
+    pair = result.pair
+    evaluation = result.evaluation
+    lines = ["=" * 50, f"CASE: {pair.case_id}", f"QUESTION: {pair.question}", f"STATUS: {pair.status}"]
+
+    if pair.status == "success":
+        lines.extend(
+            [
+                f"ANSWER: {pair.answer}",
+                f"EXTRACTION SOURCE: {pair.extraction_source}",
+                f"OVERALL SCORE: {evaluation.overall_score:.2f}",
+                f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"INPUT DOM VERIFIED: {pair.input_dom_verified}",
+                f"SUBMIT EFFECT VERIFIED: {pair.submit_effect_verified}",
+                f"INPUT VERIFIED: {pair.input_verified}",
+                f"INPUT METHOD: {pair.input_method_used or '(none)'}",
+                f"SUBMIT METHOD USED: {pair.submit_method_used}",
+                f"REASON: {pair.reason or evaluation.reason}",
+            ]
+        )
+    lines.append("CHECK FIRST: reports/latest_conversation.md")
+    lines.append("=" * 50)
+    return "\n".join(lines)
+
+
+def _build_conversation(run_results: list[RunResult], config: AppConfig | None = None) -> str:
     """Build the main per-case evidence report for human review."""
 
     lines = [
@@ -56,6 +90,22 @@ def _build_conversation(run_results: list[RunResult]) -> str:
         pair = item.pair
         ev = item.evaluation
         heading_suffix = f" ({pair.case_id})"
+
+        if not _show_detailed_case(item):
+            lines.extend(
+                [
+                    "" if index == 0 else "",
+                    f"## {pair.case_id}",
+                    "",
+                    f"- Question: {pair.question}",
+                    f"- Final Answer: {pair.answer or '(none)'}",
+                    f"- Extraction Source: {pair.extraction_source}",
+                    f"- Score: {ev.overall_score}",
+                ]
+            )
+            if index != len(run_results) - 1:
+                lines.append("")
+            continue
 
         lines.extend(
             [
@@ -151,7 +201,7 @@ def _build_conversation(run_results: list[RunResult]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _build_summary(run_results: list[RunResult]) -> str:
+def _build_summary(run_results: list[RunResult], config: AppConfig | None = None) -> str:
     total = len(run_results)
     successes = sum(1 for item in run_results if item.pair.status == "success")
     invalid_captures = sum(1 for item in run_results if item.pair.status == "invalid_capture")
@@ -182,6 +232,26 @@ def _build_summary(run_results: list[RunResult]) -> str:
         f"- 평균 overall score: {avg_score:.2f}",
         f"- human review 필요 건수: {human_review}",
     ]
+
+    lines.extend(["", "## 케이스 요약", ""])
+    if not run_results:
+        lines.append("- 없음")
+    else:
+        for item in run_results:
+            pair = item.pair
+            evaluation = item.evaluation
+            lines.extend(
+                [
+                    f"### {pair.case_id}",
+                    "",
+                    f"- Question: {pair.question}",
+                    f"- Final Answer: {pair.answer or '(none)'}",
+                    f"- Extraction Source: {pair.extraction_source}",
+                    f"- Overall Score: {evaluation.overall_score}",
+                    f"- Needs Human Review: {evaluation.needs_human_review}",
+                    "",
+                ]
+            )
 
     if lowest is not None:
         lines.extend(

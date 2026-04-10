@@ -78,6 +78,8 @@ class TestExtractedPair:
         assert pair.chat_screenshot_path == ""
         assert pair.video_path == ""
         assert pair.trace_path == ""
+        assert pair.run_mode == "speed"
+        assert pair.fast_path_used is False
         assert pair.html_fragment_path == ""
         assert pair.fix_suggestion == ""
         assert pair.input_dom_verified is False
@@ -188,6 +190,8 @@ class TestRunResult:
         assert record["input_failure_reason"] == ""
         assert record["input_candidate_score"] == 0.0
         assert record["input_candidate_logs"] == []
+        assert record["run_mode"] == "speed"
+        assert record["fast_path_used"] is False
         assert record["overall_score"] == 0.9
         assert record["needs_human_review"] is False
         assert record["fix_suggestion"] == ""

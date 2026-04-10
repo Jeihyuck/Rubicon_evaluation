@@ -25,6 +25,7 @@ from app.dom_extractor import (
     extract_visible_chat_text,
     extract_visible_text_blocks,
     filter_out_static_ui_text,
+    looks_like_chat_history_dump,
     normalize_text_for_diff,
 )
 from app.models import BrowserArtifacts, ExtractedPair, ResolvedChatContext, TestCase
@@ -134,7 +135,18 @@ CONTAINER_CANDIDATES = [
 
 LOADING_CANDIDATES = [
     {"type": "css", "value": ".typing, .loading, .spinner, [aria-busy='true'], [class*='typing'], [class*='loading']"},
-    {"type": "text", "value": compile_regex(r"입력 중|작성 중|typing|loading")},
+    {"type": "text", "value": compile_regex(r"입력 중|작성 중|답변 생성 중|찾아보고 있어요|불러오는 중|typing|loading")},
+]
+
+LOADING_TEXT_HINTS = [
+    "입력 중",
+    "작성 중",
+    "답변 생성 중",
+    "찾고 있습니다",
+    "찾아보고 있어요",
+    "불러오는 중",
+    "loading",
+    "typing",
 ]
 
 POPUP_CLOSE_CANDIDATES = [
@@ -238,6 +250,7 @@ ANSWER_SUGGESTION_LINE_HINTS = [
     "가까운 서비스센터에서 바로 가능한가요?",
     "배터리 교체 비용은 얼마나 나와요?",
     "삼성케어플러스 가입이면 혜택이 있나요?",
+    "삼성닷컴에서 어떤 제품들을 구매할 수 있나요?",
 ]
 
 HISTORY_ALWAYS_DROP_HINTS = [
@@ -259,6 +272,12 @@ MEANINGFUL_ANSWER_HINTS = [
 _KOREAN_DATE_RE = re.compile(r"\b20\d{2}년\s*\d{1,2}월\s*\d{1,2}일\b")
 _KOREAN_TIME_RE = re.compile(r"(?:오전|오후)\s*\d{1,2}:\d{2}")
 _EN_TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\s*(?:AM|PM)\b", re.IGNORECASE)
+_ANSWER_META_PREFIX_PATTERNS = [
+    re.compile(r"^자세한 내용을 보려면 Enter를 누르세요[.\s,:-]*", re.IGNORECASE),
+    re.compile(r"^리치 텍스트 메시지[.\s,:-]*", re.IGNORECASE),
+    re.compile(r"^첨부[.\s,:-]*", re.IGNORECASE),
+    re.compile(r"^더보기[.\s,:-]*", re.IGNORECASE),
+]
 
 
 @dataclass(slots=True)
@@ -406,6 +425,8 @@ def _is_meaningful_answer_text(text: str) -> bool:
     normalized = _clean_bot_answer_candidate(text)
     if not normalized:
         return False
+    if _is_loading_answer_text(normalized):
+        return False
     if _looks_like_main_answer(normalized):
         return True
     if len(normalized) >= 16:
@@ -422,6 +443,74 @@ def _should_run_ocr_fallback(dom_answer: str, new_bot_response_detected: bool, c
         return True
     normalized = _clean_bot_answer_candidate(dom_answer)
     return not _is_meaningful_answer_text(normalized)
+
+
+def _context_resolve_rounds(config: AppConfig) -> int:
+    if config.is_speed_mode:
+        return max(1, config.fast_context_resolve_rounds)
+    return 6
+
+
+def _context_resolve_wait_ms(config: AppConfig) -> int:
+    if config.is_speed_mode:
+        return max(100, config.fast_context_resolve_wait_ms)
+    return 5000
+
+
+def _answer_wait_settings(config: AppConfig) -> tuple[float, int, float]:
+    if config.is_speed_mode:
+        return (
+            config.fast_answer_timeout_ms / 1000.0,
+            max(1, config.fast_answer_stable_checks),
+            max(0.1, config.fast_answer_stable_interval_sec),
+        )
+    return (
+        config.playwright_timeout_ms / 1000.0,
+        max(1, config.answer_stable_checks),
+        max(0.1, config.answer_stable_interval_sec),
+    )
+
+
+def _should_store_success_message_history(config: AppConfig) -> bool:
+    return config.is_debug_mode or config.enable_message_history_on_success
+
+
+def _should_dump_dom_payload(*, case_failed: bool, config: AppConfig) -> bool:
+    if case_failed:
+        return True
+    return config.is_debug_mode or config.enable_dom_dump_on_success
+
+
+def _dump_chat_html_fragment(context: ResolvedChatContext | None, case_id: str, timestamp: str) -> str:
+    if context is None:
+        return ""
+
+    runtime = _runtime()
+    safe_case_id = sanitize_filename(case_id)
+    html_fragment_path = runtime.config.chatbox_dir / f"{timestamp}_{safe_case_id}.html"
+
+    html_payload = ""
+    try:
+        if context.container_locator is not None:
+            html_payload = context.container_locator.evaluate("el => el.outerHTML || ''") or ""
+    except Exception:
+        html_payload = ""
+
+    if not html_payload:
+        try:
+            html_payload = context.scope.evaluate(
+                "() => { const el = document.body || document.documentElement; return el ? (el.outerHTML || '') : ''; }"
+            ) or ""
+        except Exception:
+            html_payload = ""
+
+    if not html_payload:
+        return ""
+
+    html_fragment_path.write_text(html_payload, encoding="utf-8")
+    runtime.latest_html_fragment_path = str(html_fragment_path)
+    runtime.logger.info("[ARTIFACT][SAVE] stage=html_fragment path=%s", html_fragment_path)
+    return str(html_fragment_path)
 
 
 def _iter_scopes(page: Page) -> list[tuple[str, Page | Frame]]:
@@ -504,7 +593,12 @@ def _grade_candidate_state(candidate_state: dict[str, Any]) -> tuple[str, str]:
     if reason != "allowed":
         return "C", reason
 
-    if candidate_state.get("visible") and candidate_state.get("enabled") and _candidate_has_ready_hint(candidate_state):
+    if (
+        candidate_state.get("visible")
+        and candidate_state.get("enabled")
+        and candidate_state.get("editable")
+        and _candidate_has_ready_hint(candidate_state)
+    ):
         return "B", "ready_signal"
 
     contenteditable = str(candidate_state.get("contenteditable", "")).lower()
@@ -1137,6 +1231,54 @@ def _collect_chat_input_candidates(context: ResolvedChatContext) -> list[dict[st
     seen: set[tuple[str, str, str, int, int]] = set()
     roots = _iter_chat_input_roots(context)
 
+    if context.input_locator is not None:
+        metadata = _input_candidate_snapshot(context.input_locator)
+        if metadata and metadata.get("visible") and not _is_excluded_non_chat_candidate(metadata):
+            placeholder = _norm_text(metadata.get("placeholder"))
+            aria_label = _norm_text(metadata.get("ariaLabel"))
+            key = (
+                "current_input",
+                str(metadata.get("tag", "")),
+                placeholder,
+                int(metadata.get("rectTop", 0) or 0),
+                int(metadata.get("rectLeft", 0) or 0),
+            )
+            seen.add(key)
+            current_candidate = {
+                "locator": context.input_locator,
+                "scope": context.input_scope or context.scope,
+                "scope_name": context.input_scope_name or context.scope_name,
+                "selector": context.input_selector or str(metadata.get("tag", "") or "current_input"),
+                "root_label": "current_input",
+                "visible": bool(metadata.get("visible")),
+                "enabled": not bool(metadata.get("disabled")),
+                "editable": bool(metadata.get("editable")),
+                "disabled": bool(metadata.get("disabled")),
+                "readonly": bool(metadata.get("readOnly")),
+                "aria_disabled": False,
+                "aria_readonly": False,
+                "placeholder": placeholder,
+                "aria_label": aria_label,
+                "aria": aria_label,
+                "tag_name": str(metadata.get("tag", "")).lower(),
+                "role": str(metadata.get("role", "")).lower(),
+                "contenteditable": str(metadata.get("contentEditable", "")).lower(),
+                "bbox_width": int(metadata.get("rectWidth", 0) or 0),
+                "bbox_height": int(metadata.get("rectHeight", 0) or 0),
+                "rectTop": int(metadata.get("rectTop", 0) or 0),
+                "viewportHeight": int(metadata.get("viewportHeight", 0) or 0),
+                "footerLike": bool(metadata.get("footerLike")),
+            }
+            current_candidate["score"] = (
+                50
+                + (18 if current_candidate["footerLike"] else 0)
+                + (12 if any(hint in f"{placeholder} {aria_label}" for hint in CHAT_READY_HINTS) else 0)
+                + _candidate_bottom_weight(current_candidate)
+                + (4 if current_candidate["tag_name"] == "textarea" else 0)
+                - (25 if current_candidate["disabled"] else 0)
+            )
+            candidates.append(current_candidate)
+
     for root_label, root in roots:
         for selector in CHAT_READY_SCAN_SELECTORS:
             try:
@@ -1220,19 +1362,21 @@ def wait_until_chat_input_ready(
     case_id: str,
     config: AppConfig,
 ) -> dict[str, Any]:
-    del case_id, config
+    del case_id
     runtime = _runtime()
+    max_rounds = _context_resolve_rounds(config)
+    poll_ms = _context_resolve_wait_ms(config)
     runtime.logger.info(
-        "[CHAT_READY][START] timeout_sec=%s poll_ms=%s scope=%s",
-        CHAT_READY_TIMEOUT_SEC,
-        CHAT_READY_POLL_MS,
+        "[CHAT_READY][START] rounds=%s poll_ms=%s scope=%s",
+        max_rounds,
+        poll_ms,
         getattr(ctx, "scope_name", "resolved_ctx"),
     )
     started = time.monotonic()
     history: list[dict[str, Any]] = []
     last_state = ""
 
-    while (time.monotonic() - started) < CHAT_READY_TIMEOUT_SEC:
+    for round_index in range(max_rounds):
         context_candidates: list[dict[str, Any]] = []
         for scope_name, scope in _iter_fast_transition_contexts(page, ctx):
             current_ctx = ctx if scope is getattr(ctx, "scope", None) else scope
@@ -1245,6 +1389,18 @@ def wait_until_chat_input_ready(
         candidates = sorted(context_candidates, key=lambda item: item.get("score", 0), reverse=True)
         ready_candidate = next((candidate for candidate in candidates if _is_ready_candidate(candidate)), None)
         disabled_candidate = next((candidate for candidate in candidates if _is_disabled_transition_candidate(candidate)), None)
+        fallback_candidate = None
+        if round_index == 0:
+            fallback_candidate = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate.get("visible", False)
+                    and not candidate.get("disabled", False)
+                    and str(candidate.get("reason", "")) != "placeholder_shell"
+                ),
+                None,
+            )
 
         if ready_candidate is not None:
             runtime.logger.info(
@@ -1266,6 +1422,25 @@ def wait_until_chat_input_ready(
                 "result": "ready",
             }
 
+        if fallback_candidate is not None:
+            runtime.logger.info(
+                "[CHAT_READY][FALLBACK] selector=%s placeholder=%r aria=%r editable=%s",
+                fallback_candidate.get("selector"),
+                fallback_candidate.get("placeholder"),
+                fallback_candidate.get("aria_label"),
+                fallback_candidate.get("editable"),
+            )
+            history.append(_history_entry("fallback_candidate", fallback_candidate, started))
+            return {
+                "ready": True,
+                "timeout": False,
+                "scope": fallback_candidate.get("scope", ctx.scope),
+                "scope_name": fallback_candidate.get("scope_name", getattr(ctx, "scope_name", "resolved_ctx")),
+                "candidate": fallback_candidate,
+                "history": history,
+                "result": "fallback_candidate",
+            }
+
         if disabled_candidate is not None:
             runtime.logger.info(
                 "[CHAT_READY][WAITING_DISABLED] selector=%s placeholder=%r aria=%r",
@@ -1281,7 +1456,8 @@ def wait_until_chat_input_ready(
                 history.append(_history_entry("waiting_other", candidates[0] if candidates else None, started))
                 last_state = "waiting_other"
 
-        page.wait_for_timeout(CHAT_READY_POLL_MS)
+        if round_index != max_rounds - 1:
+            page.wait_for_timeout(poll_ms)
 
     runtime.logger.warning("[CHAT_READY][TIMEOUT]")
     return {
@@ -1475,6 +1651,19 @@ def open_chat_widget_or_conversation(page: Page) -> dict[str, Any]:
     runtime = _runtime()
     result = {"open_method": "failed", "open_ok": False, "open_error": ""}
     sdk_status = get_sprinklr_sdk_status(page)
+
+    def maybe_start_new_conversation(method_name: str) -> None:
+        if runtime.config.rubicon_disable_sdk or not sdk_status.get("has_sprchat"):
+            return
+        if method_name == "sdk_open_new":
+            return
+        try:
+            page.evaluate("() => window.sprChat('openNewConversation')")
+            page.wait_for_timeout(1200)
+            runtime.logger.info("[SPR][OPEN][NEW_CONVERSATION] method=%s", method_name)
+        except Exception as exc:
+            runtime.logger.warning("[SPR][OPEN][NEW_CONVERSATION_FALLBACK] method=%s err=%s", method_name, exc)
+
     methods: list[tuple[str, Any]] = [
         ("ui_star_launcher", lambda: _click_preferred_rubicon_launcher(page)[0]),
         ("ui_launcher_candidates", lambda: _click_selector_candidates(page, ["#spr-chat__trigger-button", *_SPR_CHAT_TRIGGER_CANDIDATES])),
@@ -1494,6 +1683,7 @@ def open_chat_widget_or_conversation(page: Page) -> dict[str, Any]:
             action()
             page.wait_for_timeout(800)
             if _chat_surface_present(page):
+                maybe_start_new_conversation(method_name)
                 runtime.logger.info("[SPR][OPEN][OK] method=%s", method_name)
                 result.update({"open_method": method_name, "open_ok": True, "open_error": ""})
                 return result
@@ -1508,6 +1698,7 @@ def open_chat_widget_or_conversation(page: Page) -> dict[str, Any]:
         page.wait_for_timeout(800)
         result.update({"open_method": "legacy_chat_icon", "open_ok": _chat_surface_present(page), "open_error": ""})
         if result["open_ok"]:
+            maybe_start_new_conversation("legacy_chat_icon")
             runtime.logger.info("[SPR][OPEN][OK] method=legacy_chat_icon")
             return result
     except Exception as exc:
@@ -1783,6 +1974,7 @@ def _click_preferred_rubicon_launcher(page: Page) -> tuple[bool, str]:
 
 def _open_sprinklr_widget(page: Page) -> bool:
     runtime = _runtime()
+    settle_wait_ms = 500 if runtime.config.is_speed_mode else 1500
     script = """
 () => {
   const button = document.querySelector('#spr-chat__trigger-button, .spr-chat__trigger-box button');
@@ -1796,7 +1988,7 @@ def _open_sprinklr_widget(page: Page) -> bool:
 
     try:
         if page.evaluate(script):
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(settle_wait_ms)
     except Exception:
         pass
 
@@ -1807,7 +1999,7 @@ def _open_sprinklr_widget(page: Page) -> bool:
             if trigger.count() <= 0:
                 continue
             trigger.click(timeout=3000)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(settle_wait_ms)
             runtime.logger.info("rubicon icon clicked")
             return True
         except Exception:
@@ -1826,21 +2018,20 @@ def inject_korean_font(page: Page) -> bool:
     """
 
     runtime = _runtime()
-    success = False
-    try:
-        page.add_style_tag(content=KOREAN_FONT_CSS)
-        success = True
-        runtime.logger.info("[FONT] Korean font fallback injected into main page")
-    except Exception as exc:
-        runtime.logger.warning("[FONT] font injection failed on main page: %s", exc)
-
-    for frame in page.frames:
-        try:
-            frame.add_style_tag(content=KOREAN_FONT_CSS)
-        except Exception:
-            pass
-
+    success = _inject_korean_font_css(page, runtime.logger, label="main page")
+    for index, frame in enumerate(page.frames):
+        _inject_korean_font_css(frame, runtime.logger, label=f"frame[{index}]")
     return success
+
+
+def _inject_korean_font_css(scope: Page | Frame, logger: Any, label: str = "scope") -> bool:
+    try:
+        scope.add_style_tag(content=KOREAN_FONT_CSS)
+        logger.info("[FONT] Korean font fallback injected into %s", label)
+        return True
+    except Exception as exc:
+        logger.warning("[FONT] font injection failed on %s: %s", label, exc)
+        return False
 
 
 def open_homepage(page: Page) -> None:
@@ -1894,19 +2085,22 @@ def open_rubicon_widget(page: Page) -> None:
     """Locate and click the floating Rubicon launcher if the chat is not already open."""
 
     runtime = _runtime()
+    input_timeout_ms = 600 if runtime.config.is_speed_mode else 1200
     for scope_name, scope in _iter_scopes(page):
-        input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=1200)
+        input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=input_timeout_ms)
         if input_locator is not None:
             runtime.logger.info("rubicon icon clicked")
             return
 
     if _open_sprinklr_widget(page):
-        for _ in range(10):
+        settle_rounds = 6 if runtime.config.is_speed_mode else 10
+        settle_wait_ms = 500 if runtime.config.is_speed_mode else 1000
+        for _ in range(settle_rounds):
             for _, scope in _iter_scopes(page):
                 input_locator, _ = first_visible_locator(scope, INPUT_CANDIDATES, timeout_ms=600)
                 if input_locator is not None:
                     return
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(settle_wait_ms)
 
     for scope_name, scope in _iter_scopes(page):
         launcher, _ = first_visible_locator(scope, LAUNCHER_CANDIDATES, timeout_ms=1500)
@@ -1984,6 +2178,8 @@ def score_frame_as_chat_candidate(scope: Page | Frame) -> int:
 
     if "live-chat" in scope_hint or "spr-live-chat-frame" in scope_hint:
         score += 7
+    if "survey-app" in scope_hint or "survey" in scope_hint:
+        score -= 12
     if "session-storage" in scope_hint:
         score -= 4
     if "trigger" in scope_hint:
@@ -2011,6 +2207,8 @@ def resolve_sprinklr_chat_context(page: Page) -> ResolvedChatContext:
             continue
         scored.append((score, scope_name, scope))
 
+    fallback_context: ResolvedChatContext | None = None
+
     for score, scope_name, scope in sorted(scored, key=lambda item: item[0], reverse=True):
         container_locator, container_candidate = first_visible_locator(scope, CONTAINER_CANDIDATES, timeout_ms=900)
         context = ResolvedChatContext(
@@ -2037,6 +2235,10 @@ def resolve_sprinklr_chat_context(page: Page) -> ResolvedChatContext:
             else:
                 context.input_failure_category = "no_editable_candidate_after_rescan"
                 context.input_failure_reason = "No editable candidate found in ranked rescan"
+            runtime.logger.info("[CONTEXT] skipping chat frame without editable input: %s", scope_name)
+            if fallback_context is None:
+                fallback_context = context
+            continue
         runtime.logger.info("[CONTEXT] selected chat frame: %s", scope_name)
         runtime.logger.info("[CONTEXT] chat container selector matched: %s", container_candidate)
         runtime.logger.info("[INPUT] selected input scope: %s", context.input_scope_name or "(none)")
@@ -2047,15 +2249,36 @@ def resolve_sprinklr_chat_context(page: Page) -> ResolvedChatContext:
             runtime.logger.warning("[INPUT] %s", context.input_failure_reason)
         return context
 
+    if fallback_context is not None:
+        runtime.logger.info("[CONTEXT] selected fallback chat frame: %s", fallback_context.scope_name)
+        runtime.logger.info("[INPUT] selected input scope: %s", fallback_context.input_scope_name or "(none)")
+        runtime.logger.info("[INPUT] selected input selector: %s", fallback_context.input_selector or "(none)")
+        runtime.logger.info("[INPUT] selected input score: %s", fallback_context.input_candidate_score)
+        if fallback_context.input_failure_category:
+            runtime.logger.warning("[INPUT] %s", fallback_context.input_failure_category)
+            runtime.logger.warning("[INPUT] %s", fallback_context.input_failure_reason)
+        return fallback_context
+
     raise RuntimeError("Chat iframe/input context could not be resolved")
 
 
 def resolve_chat_context(page: Page) -> ResolvedChatContext:
     """Resolve the active chat context from the page DOM or nested iframes."""
 
-    context = resolve_sprinklr_chat_context(page)
-    _runtime().logger.info("chat context resolved")
-    return context
+    runtime = _runtime()
+    last_error: Exception | None = None
+
+    for attempt in range(_context_resolve_rounds(runtime.config)):
+        try:
+            context = resolve_sprinklr_chat_context(page)
+            runtime.logger.info("chat context resolved attempt=%s", attempt + 1)
+            return context
+        except Exception as exc:
+            last_error = exc
+            if attempt != _context_resolve_rounds(runtime.config) - 1:
+                page.wait_for_timeout(_context_resolve_wait_ms(runtime.config))
+
+    raise RuntimeError(str(last_error or "Chat iframe/input context could not be resolved"))
 
 
 # ---------------------------------------------------------------------------
@@ -2245,19 +2468,36 @@ def _normalize_text(value: str) -> str:
 def _normalize_answer_text(text: str | None) -> str:
     if not text:
         return ""
-    text = str(text).replace("\u00a0", " ")
+    text = re.sub(r"[\u200e\u200f\u202a-\u202e\ufeff]", "", str(text)).replace("\u00a0", " ")
     lines = [line.strip() for line in text.splitlines()]
     lines = [line for line in lines if line]
     return "\n".join(lines).strip()
 
 
+def _strip_answer_meta_prefixes(text: str) -> str:
+    cleaned = _normalize_answer_text(text)
+    if not cleaned:
+        return ""
+
+    changed = True
+    while changed:
+        changed = False
+        for pattern in _ANSWER_META_PREFIX_PATTERNS:
+            updated = pattern.sub("", cleaned).strip()
+            if updated != cleaned:
+                cleaned = updated
+                changed = True
+
+    return cleaned
+
+
 def _is_noise_line(line: str) -> bool:
-    line_n = _normalize_answer_text(line)
+    line_n = _strip_answer_meta_prefixes(line)
     if not line_n:
         return True
 
     for hint in ANSWER_META_NOISE_HINTS:
-        if hint in line_n:
+        if line_n == hint:
             return True
 
     if "2026년" in line_n and ("수신됨" in line_n or "전송됨" in line_n):
@@ -2296,8 +2536,34 @@ def _strip_followup_suggestions(text: str) -> str:
     return "\n".join(filtered_lines).strip()
 
 
-def _clean_bot_answer_candidate_details(text: str) -> dict[str, Any]:
+def _is_loading_answer_text(text: str) -> bool:
     text_n = _normalize_answer_text(text)
+    if not text_n:
+        return False
+    lowered = text_n.lower()
+    if not any(hint in lowered for hint in LOADING_TEXT_HINTS):
+        return False
+    if any(hint in text_n for hint in MEANINGFUL_ANSWER_HINTS):
+        return False
+    if len(text_n) > 120 and _looks_like_main_answer_shape(text_n):
+        return False
+    return True
+
+
+def _looks_like_main_answer_shape(text: str) -> bool:
+    if not text:
+        return False
+    if len(text) < MIN_MAIN_ANSWER_LEN:
+        return False
+    if "\n" not in text and text.endswith("?"):
+        return False
+    if "\n" not in text and text.endswith("요?"):
+        return False
+    return True
+
+
+def _clean_bot_answer_candidate_details(text: str) -> dict[str, Any]:
+    text_n = _strip_answer_meta_prefixes(text)
     runtime = _RUNTIME
     if runtime is not None:
         runtime.logger.info("[ANSWER_EXTRACT][CLEAN_BEFORE] %s", text_n)
@@ -2318,6 +2584,10 @@ def _clean_bot_answer_candidate_details(text: str) -> dict[str, Any]:
 
     joined = "\n".join(lines).strip()
     stripped = _strip_followup_suggestions(joined)
+    if _is_followup_question_chip(stripped):
+        stripped = ""
+    if _is_loading_answer_text(stripped):
+        stripped = ""
     removed_followups = stripped != joined
     if runtime is not None:
         runtime.logger.info(
@@ -2339,15 +2609,7 @@ def _clean_bot_answer_candidate(text: str) -> str:
 
 def _looks_like_main_answer(text: str) -> bool:
     text_n = _clean_bot_answer_candidate(text)
-    if not text_n:
-        return False
-    if len(text_n) < MIN_MAIN_ANSWER_LEN:
-        return False
-    if "\n" not in text_n and text_n.endswith("?"):
-        return False
-    if "\n" not in text_n and text_n.endswith("요?"):
-        return False
-    return True
+    return _looks_like_main_answer_shape(text_n)
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -2470,7 +2732,7 @@ def _extract_last_bot_message_locator(context: ResolvedChatContext) -> Locator |
     return None
 
 
-def extract_last_answer(context: ResolvedChatContext) -> dict[str, Any]:
+def extract_last_answer(context: ResolvedChatContext, question: str = "") -> dict[str, Any]:
     candidate_texts: list[str] = []
     last_bot_node = _extract_last_bot_message_locator(context)
     runtime = _runtime()
@@ -2513,7 +2775,7 @@ def extract_last_answer(context: ResolvedChatContext) -> dict[str, Any]:
     for raw in candidate_texts:
         details = _clean_bot_answer_candidate_details(raw)
         cleaned_text = details["clean"]
-        if cleaned_text:
+        if cleaned_text and not _is_followup_question_chip(cleaned_text, question):
             cleaned.append((raw, cleaned_text, details))
 
     main_candidates = [item for item in cleaned if _looks_like_main_answer(item[1])]
@@ -2557,13 +2819,22 @@ def extract_last_answer(context: ResolvedChatContext) -> dict[str, Any]:
 def _select_report_answer(wait_answer: str, dom_answer: str, has_verified_response: bool) -> str:
     """Prefer the verified wait-result answer over weaker DOM payload text."""
 
-    if has_verified_response and _looks_like_main_answer(wait_answer):
+    wait_clean = _clean_bot_answer_candidate(wait_answer)
+    dom_clean = _clean_bot_answer_candidate(dom_answer)
+    if looks_like_chat_history_dump(wait_clean):
+        wait_clean = ""
+        wait_answer = ""
+    if looks_like_chat_history_dump(dom_clean):
+        dom_clean = ""
+        dom_answer = ""
+
+    if has_verified_response and _looks_like_main_answer(wait_clean):
         return wait_answer
-    if _looks_like_main_answer(dom_answer):
+    if _looks_like_main_answer(dom_clean):
         return dom_answer
-    if has_verified_response and _normalize_answer_text(wait_answer):
+    if has_verified_response and wait_clean and not _is_followup_question_chip(wait_clean):
         return wait_answer
-    if dom_answer:
+    if dom_clean and not _is_followup_question_chip(dom_clean):
         return dom_answer
     return wait_answer
 
@@ -2579,6 +2850,8 @@ def _recover_dom_response_candidate(
     def add_candidate(raw_text: str, clean_text: str, source: str) -> None:
         raw_n = _normalize_answer_text(raw_text)
         clean_n = _clean_bot_answer_candidate(clean_text or raw_text)
+        if looks_like_chat_history_dump(raw_n) or looks_like_chat_history_dump(clean_n):
+            return
         if not raw_n or not clean_n or not _looks_like_main_answer(clean_n):
             return
         candidates.append(
@@ -2873,11 +3146,12 @@ def enter_question_with_verification(
     input_locator: Locator,
     question: str,
     logger: Any,
+    use_extended_fallbacks: bool = True,
 ) -> tuple[bool, str, Locator, str]:
     """Try multiple strategies to type *question* and verify it was accepted.
 
     Returns ``(input_verified, method_used)`` where *method_used* is one of
-    ``"fill"``, ``"press_sequentially"``, ``"keyboard.type"`` or ``""`` when all
+    ``"fill"``, ``"keyboard.type"``, ``"press_sequentially"``, ``"js_fallback"`` or ``""`` when all
     strategies fail.
     """
 
@@ -2914,14 +3188,21 @@ def enter_question_with_verification(
     _clear_input(effective_locator, input_type)
     _focus_input(effective_locator, logger)
 
+    if _try_keyboard_type(scope, effective_locator, question, input_type, logger):
+        return True, "keyboard.type", effective_locator, effective_selector
+
+    if not use_extended_fallbacks:
+        logger.info("[INPUT] extended fallback disabled for lean path")
+        return False, "", effective_locator, effective_selector
+
+    _clear_input(effective_locator, input_type)
+    _focus_input(effective_locator, logger)
+
     if _try_press_sequentially(effective_locator, question, input_type, logger):
         return True, "press_sequentially", effective_locator, effective_selector
 
     _clear_input(effective_locator, input_type)
     _focus_input(effective_locator, logger)
-
-    if _try_keyboard_type(scope, effective_locator, question, input_type, logger):
-        return True, "keyboard.type", effective_locator, effective_selector
 
     if _try_js_fallback(effective_locator, question, input_type, logger):
         return True, "js_fallback", effective_locator, effective_selector
@@ -3371,7 +3652,13 @@ def submit_question(
         if context.send_locator is None:
             context.send_locator, _ = first_visible_locator(context.scope, SEND_BUTTON_CANDIDATES, timeout_ms=800)
 
-        input_dom_verified, method_used, effective_locator, effective_selector = enter_question_with_verification(candidate["scope"], candidate["locator"], question, runtime.logger)
+        input_dom_verified, method_used, effective_locator, effective_selector = enter_question_with_verification(
+            candidate["scope"],
+            candidate["locator"],
+            question,
+            runtime.logger,
+            use_extended_fallbacks=runtime.config.is_debug_mode or rank > 1,
+        )
         if effective_locator is not None:
             context.input_locator = effective_locator
         if effective_selector:
@@ -3446,7 +3733,8 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
 
     runtime = _runtime()
     started = time.perf_counter()
-    deadline = started + (runtime.config.playwright_timeout_ms / 1000.0)
+    timeout_sec, stable_target, interval_sec = _answer_wait_settings(runtime.config)
+    deadline = started + timeout_sec
     stable_checks = 0
     previous_text = ""
     latest_text = ""
@@ -3487,14 +3775,31 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
             ):
                 baseline_menu_detected = True
                 latest_text = ""
+            if latest_text and _is_loading_answer_text(latest_text):
+                runtime.logger.info("[ANSWER] loading-only candidate ignored: %s", latest_text)
+                latest_text = ""
             if latest_text:
+                clean_latest_text = _clean_bot_answer_candidate(latest_text)
+                is_meaningful = len(clean_latest_text) >= MIN_MAIN_ANSWER_LEN and _is_meaningful_answer_text(clean_latest_text)
+                growing = bool(previous_text) and clean_latest_text.startswith(previous_text) and len(clean_latest_text) > len(previous_text)
                 runtime.logger.info("[ANSWER] final answer segment chosen: %s", latest_text)
-                if latest_text == previous_text:
+                if clean_latest_text == previous_text:
                     stable_checks += 1
                 else:
                     stable_checks = 1
-                    previous_text = latest_text
-                if stable_checks >= runtime.config.answer_stable_checks and not _loading_visible(context):
+                    previous_text = clean_latest_text
+                if runtime.config.is_speed_mode and is_meaningful and stable_checks >= stable_target and not growing and not _loading_visible(context):
+                    response_ms = int((time.perf_counter() - started) * 1000)
+                    runtime.logger.info("[ANSWER] fast answer stabilized true")
+                    runtime.logger.info("[ANSWER][RESPONSE_DETECTED] response_ms=%s", response_ms)
+                    return AnswerWaitResult(
+                        answer=latest_text,
+                        response_ms=response_ms,
+                        new_bot_response_detected=True,
+                        baseline_menu_detected=baseline_menu_detected,
+                        reason="",
+                    )
+                if stable_checks >= stable_target and not _loading_visible(context):
                     response_ms = int((time.perf_counter() - started) * 1000)
                     runtime.logger.info("[ANSWER] answer stabilized true")
                     runtime.logger.info("[ANSWER][RESPONSE_DETECTED] response_ms=%s", response_ms)
@@ -3507,9 +3812,9 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
                     )
 
         if hasattr(context.scope, "wait_for_timeout"):
-            context.scope.wait_for_timeout(int(runtime.config.answer_stable_interval_sec * 1000))
+            context.scope.wait_for_timeout(int(interval_sec * 1000))
         else:
-            time.sleep(runtime.config.answer_stable_interval_sec)
+            time.sleep(interval_sec)
 
     runtime.logger.info("[ANSWER] answer stabilized false")
     if baseline_menu_detected:
@@ -3541,10 +3846,6 @@ def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: 
 
     runtime = _runtime()
     timestamp = runtime.current_case_timestamp or artifact_timestamp()
-    safe_case_id = sanitize_filename(case_id)
-    fullpage_path = runtime.config.fullpage_dir / f"{timestamp}_{safe_case_id}.png"
-    chatbox_path = runtime.config.chatbox_dir / f"{timestamp}_{safe_case_id}.png"
-    html_fragment_path = runtime.config.chatbox_dir / f"{timestamp}_{safe_case_id}.html"
 
     fullpage_str, chatbox_str = _capture_stage(
         page,
@@ -3558,7 +3859,10 @@ def capture_artifacts(page: Page, context: ResolvedChatContext | None, case_id: 
     )
     fullpage_path = Path(fullpage_str) if fullpage_str else None
     chatbox_path = Path(chatbox_str) if chatbox_str else None
-    html_fragment_path = None
+    html_fragment = ""
+    if _should_dump_dom_payload(case_failed=True, config=runtime.config):
+        html_fragment = _dump_chat_html_fragment(context, case_id, timestamp)
+    html_fragment_path = Path(html_fragment) if html_fragment else None
 
     runtime.logger.info("artifacts saved")
     return BrowserArtifacts(
@@ -3680,13 +3984,16 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     submission: SubmissionEvidence | None = None
 
     try:
-        open_homepage(page)
+        if runtime.config.reopen_homepage_per_case or not page.url:
+            open_homepage(page)
         font_fix_applied = inject_korean_font(page)
         dismiss_popups(page)
         sdk_info = get_sprinklr_sdk_status(page)
         sdk_status = f"has_sprchat={sdk_info.get('has_sprchat', False)} trigger_exists={sdk_info.get('trigger_exists', False)}"
         bind_availability_probe(page)
         open_result = open_chat_widget_or_conversation(page)
+        if runtime.config.reinject_font_css_after_open:
+            font_fix_applied = inject_korean_font(page) or font_fix_applied
         open_method_used = str(open_result.get("open_method", "failed"))
         availability_status = get_availability_probe(page)
 
@@ -3707,10 +4014,15 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         try:
             context = resolve_chat_context(page)
         except Exception as exc:
-            if not input_failure_category:
+            retry_error = exc
+            try:
+                page.wait_for_timeout(_context_resolve_wait_ms(runtime.config))
+                context = resolve_chat_context(page)
+            except Exception:
+                context = None
+            if context is None and not input_failure_category:
                 input_failure_category = "availability_unavailable" if availability_status.lower() in UNAVAILABLE_AVAILABILITY_VALUES else "no_chat_open"
-                input_failure_reason = str(exc)
-            context = None
+                input_failure_reason = str(retry_error)
 
         if context is not None:
             input_scope = context.input_scope_name or context.scope_name
@@ -3719,7 +4031,6 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
             input_candidate_score = context.input_candidate_score
             input_candidate_logs = list(context.input_candidate_logs)
             input_candidates_debug = "\n".join(input_candidate_logs)
-            context.frame_inventory = scan_frame_inventory(page)
             opened_full_screenshot_path, opened_chat_screenshot_path = _capture_stage(
                 page,
                 context,
@@ -3909,8 +4220,10 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 )
 
             dom_payload = extract_dom_payload(context, None, question=test_case.question)
+            if _should_dump_dom_payload(case_failed=False, config=runtime.config):
+                _dump_chat_html_fragment(context, test_case.id, runtime.current_case_timestamp)
             dom_answer = dom_payload.get("answer", "")
-            last_answer_payload = extract_last_answer(context)
+            last_answer_payload = extract_last_answer(context, question=test_case.question)
             selected_answer_raw = _select_report_answer(
                 answer_raw,
                 last_answer_payload.get("answer_raw") or dom_answer,
@@ -3935,33 +4248,40 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 else:
                     extraction_source_detail = "dom_payload"
             raw_history = dom_payload.get("history", [])
-            message_history, history_noise_removed = _clean_message_history(
-                raw_history,
-                question=test_case.question,
-                actual_answer=actual_answer_clean or actual_answer,
-            )
-            message_history_clean = "\n".join(message_history).strip()
-            noise_lines_removed += history_noise_removed
-            structured_message_history_count = int(dom_payload.get("structured_message_history_count", 0) or 0)
-            fallback_diff_used = bool(dom_payload.get("fallback_diff_used", False))
-            runtime.logger.info("[HISTORY] visible text block count: %s", len(dom_payload.get("visible_text_blocks", [])))
-            if not message_history:
-                runtime.logger.warning(
-                    "[HISTORY] no structured message history extracted; falling back to visible chat text scan"
-                )
-                visible_text = dom_payload.get("visible_chat_text", "")
+            if _should_store_success_message_history(runtime.config):
                 message_history, history_noise_removed = _clean_message_history(
-                    visible_text.splitlines(),
+                    raw_history,
                     question=test_case.question,
                     actual_answer=actual_answer_clean or actual_answer,
                 )
                 message_history_clean = "\n".join(message_history).strip()
                 noise_lines_removed += history_noise_removed
-                runtime.logger.info("[HISTORY] visible chat text fallback used")
-                fallback_diff_used = True
-            runtime.logger.info("[HISTORY] history extracted count: %s", len(message_history))
-            runtime.logger.info("[HISTORY] structured message history count: %s", structured_message_history_count)
-            runtime.logger.info("[HISTORY] fallback diff used: %s", fallback_diff_used)
+                structured_message_history_count = int(dom_payload.get("structured_message_history_count", 0) or 0)
+                fallback_diff_used = bool(dom_payload.get("fallback_diff_used", False))
+                runtime.logger.info("[HISTORY] visible text block count: %s", len(dom_payload.get("visible_text_blocks", [])))
+                if not message_history:
+                    runtime.logger.warning(
+                        "[HISTORY] no structured message history extracted; falling back to visible chat text scan"
+                    )
+                    visible_text = dom_payload.get("visible_chat_text", "")
+                    message_history, history_noise_removed = _clean_message_history(
+                        visible_text.splitlines(),
+                        question=test_case.question,
+                        actual_answer=actual_answer_clean or actual_answer,
+                    )
+                    message_history_clean = "\n".join(message_history).strip()
+                    noise_lines_removed += history_noise_removed
+                    runtime.logger.info("[HISTORY] visible chat text fallback used")
+                    fallback_diff_used = True
+                runtime.logger.info("[HISTORY] history extracted count: %s", len(message_history))
+                runtime.logger.info("[HISTORY] structured message history count: %s", structured_message_history_count)
+                runtime.logger.info("[HISTORY] fallback diff used: %s", fallback_diff_used)
+            else:
+                message_history = []
+                message_history_clean = ""
+                structured_message_history_count = 0
+                fallback_diff_used = False
+                runtime.logger.info("[HISTORY] success-path history capture skipped in %s mode", runtime.config.run_mode)
 
             if not new_bot_response_detected:
                 recovered_payload = _recover_dom_response_candidate(
@@ -4124,11 +4444,17 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         status=status,
         reason=reason,
         error_message=error_message,
+        run_mode=runtime.config.run_mode,
+        fast_path_used=runtime.config.is_speed_mode and input_method_used in {"fill", "keyboard.type"} and not ocr_text,
         full_screenshot_path=after_answer_full_screenshot_path or str(artifacts.fullpage_screenshot or ""),
         chat_screenshot_path=after_answer_screenshot_path or str(artifacts.chatbox_screenshot or ""),
+        submitted_chat_screenshot_path=after_send_screenshot_path,
+        answered_chat_screenshot_path=after_answer_screenshot_path,
         video_path="",
         trace_path="",
         html_fragment_path=str(artifacts.html_fragment_path or runtime.latest_html_fragment_path or ""),
+        evidence_markdown_path="",
+        evidence_json_path="",
         fix_suggestion=fix_suggestion,
         input_dom_verified=input_dom_verified,
         submit_effect_verified=submit_effect_verified,

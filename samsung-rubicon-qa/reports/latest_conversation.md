@@ -5,208 +5,116 @@
 
 ## case01
 
-- Question: 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?
-- Input DOM Verified: True
-- Submit Effect Verified: True
-- Input Scope: spr-chat__box-frame
-- Input Selector: textarea
-- Input Candidate Score: 80
-- Input Failure Category: (none)
-- Input Failure Reason: (none)
-- Top Candidate Placeholder: 무엇이든 물어보세요.
-- Top Candidate Aria: 무엇이든 물어보세요.
-- Input Ready Wait Attempted: True
-- Input Ready Wait Result: ready_already_present
-- Input Verified: True
-- Input Method: fill
-- Submit Method Used: button_click
-- User Message Echo Verified: True
-- New Bot Response Detected: True
-- Top Candidate Disabled: False
-- Transition Ready: False
-- Transition Timeout: False
-- Transition Reason: (none)
-- Transition History: []
-- Activation Attempted: False
-- Activation Steps Tried: (none)
-- Editable Candidates Count: 1
-- Failover Attempts: 1
-- Final Input Target Frame: spr-chat__box-frame
-- SDK Status: has_sprchat=True trigger_exists=True
-- Availability Status: unknown
-- Open Method Used: ui_star_launcher
-- Status: success
-- Actual Answer: 갤럭시 S24 배터리 교체는 삼성전자 서비스센터에서 진행하실 수 있어요. 가장 가까운 센터를 찾아 방문 접수하시면 됩니다. 배터리 교체는 보통 센터 방문 수리로 처리돼요. 방문 전에 센터 운영시간을 확인하고 가시면 대기 시간을 줄이기 좋습니다. ⚠️ 알아두실 점 — 배터리 교체 비용은 제품 상태 점검 후(고객 과실 여부/보증 범위 여부에 따라) 달라질 수 있어요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-- Actual Answer Clean: 갤럭시 S24 배터리 교체는 삼성전자 서비스센터에서 진행하실 수 있어요. 가장 가까운 센터를 찾아 방문 접수하시면 됩니다. 배터리 교체는 보통 센터 방문 수리로 처리돼요. 방문 전에 센터 운영시간을 확인하고 가시면 대기 시간을 줄이기 좋습니다. ⚠️ 알아두실 점 — 배터리 교체 비용은 제품 상태 점검 후(고객 과실 여부/보증 범위 여부에 따라) 달라질 수 있어요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-- Answer Raw: 갤럭시 S24 배터리 교체는 삼성전자 서비스센터에서 진행하실 수 있어요. 가장 가까운 센터를 찾아 방문 접수하시면 됩니다. 배터리 교체는 보통 센터 방문 수리로 처리돼요. 방문 전에 센터 운영시간을 확인하고 가시면 대기 시간을 줄이기 좋습니다. ⚠️ 알아두실 점 — 배터리 교체 비용은 제품 상태 점검 후(고객 과실 여부/보증 범위 여부에 따라) 달라질 수 있어요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
+- Question: 갤럭시 S26 울트라의 디스플레이 크기와 카메라 구성 그리고 배터리 같은 핵심 사양을 알려주세요.
+- Final Answer: 갤럭시 S26 울트라는 6.9형 대화면, 후면 4카메라, 5,000mAh 배터리가 핵심이에요. 디스플레이 6.9형 Dynamic AMOLED 2X QHD+ 3120×1440, 최대 120Hz 카메라 구성 후면 4개: 2억 화소 광각 + 5,000만 망원 + 5,000만 망원 + 1,000만 줌: 3배/5배 광학, 2배/10배는 광학 줌 수준, 최대 100배 디지털 줌 전면: 1,200만 화소 배터리 5,000mAh 동영상 재생 최대 31시간 이 정도면 구매 판단 포인트는 2가지로 정리돼요. **줌 촬영(여행·공연·아이 사진)**을 얼마나 자주 하시는지 S펜 필기/업무 활용이 필요한지 ⚠️ 알아두실 점 — ‘동영상 최대 31시간’은 화면 밝기, 네트워크, 앱 사용 패턴에 따라 체감이 달라질 수 있어요.
 - Extraction Source: dom
-- Message History Clean: 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?
-갤럭시 S24 배터리 교체는 삼성전자 서비스센터에서 진행하실 수 있어요. 가장 가까운 센터를 찾아 방문 접수하시면 됩니다. 배터리 교체는 보통 센터 방문 수리로 처리돼요. 방문 전에 센터 운영시간을 확인하고 가시면 대기 시간을 줄이기 좋습니다. ⚠️ 알아두실 점 — 배터리 교체 비용은 제품 상태 점검 후(고객 과실 여부/보증 범위 여부에 따라) 달라질 수 있어요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-- Overall Score: 4.6
-- Needs Human Review: False
-- Opened Footer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_022026_case01_opened_footer.png
-- Before Send Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_022026_case01_before_send.png
-- After Answer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_022026_case01_after_answer.png
-- Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260406_022026_case01_after_answer.png
-- Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_022026_case01_after_answer.png
-
-### Input Candidates (case01)
-
-- score=80.0 selector=textarea scope=spr-chat__box-frame visible=True editable=True disabled=False grade=? reason=?
-
-### Answer Extraction Debug (case01)
-
-- selected_source=wait_verified
-- raw_len=252
-- clean_len=252
-- removed_followups=False
-- noise_lines_removed=13
-
-### Message History (case01)
-
-- 갤럭시 S24 배터리 교체는 어디서 할 수 있나요?
-- 갤럭시 S24 배터리 교체는 삼성전자 서비스센터에서 진행하실 수 있어요. 가장 가까운 센터를 찾아 방문 접수하시면 됩니다. 배터리 교체는 보통 센터 방문 수리로 처리돼요. 방문 전에 센터 운영시간을 확인하고 가시면 대기 시간을 줄이기 좋습니다. ⚠️ 알아두실 점 — 배터리 교체 비용은 제품 상태 점검 후(고객 과실 여부/보증 범위 여부에 따라) 달라질 수 있어요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
+- Score: 2.6
 
 
 ## case02
 
-- Question: 휴대폰 액정 수리 접수는 어떻게 하나요?
-- Input DOM Verified: True
-- Submit Effect Verified: True
-- Input Scope: spr-chat__box-frame
-- Input Selector: textarea
-- Input Candidate Score: 80
-- Input Failure Category: (none)
-- Input Failure Reason: (none)
-- Top Candidate Placeholder: 무엇이든 물어보세요.
-- Top Candidate Aria: 무엇이든 물어보세요.
-- Input Ready Wait Attempted: True
-- Input Ready Wait Result: ready_already_present
-- Input Verified: True
-- Input Method: fill
-- Submit Method Used: button_click
-- User Message Echo Verified: True
-- New Bot Response Detected: True
-- Top Candidate Disabled: False
-- Transition Ready: False
-- Transition Timeout: False
-- Transition Reason: (none)
-- Transition History: []
-- Activation Attempted: False
-- Activation Steps Tried: (none)
-- Editable Candidates Count: 1
-- Failover Attempts: 1
-- Final Input Target Frame: spr-chat__box-frame
-- SDK Status: has_sprchat=True trigger_exists=True
-- Availability Status: unknown
-- Open Method Used: ui_star_launcher
-- Status: success
-- Actual Answer: 휴대폰 액정 수리는 가까운 서비스센터 방문으로 바로 접수하는 게 가장 빠르고, 필요하면 방문 수리도 전화로 신청할 수 있어요. 가장 빠른 방법: 서비스센터 방문 접수 가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요. 집에서 받고 싶다면: 방문 수리 신청 전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.) 삼성케어플러스 가입 중이면 수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요. 액정 파손 수리는 파손된 액정 반납 조건이 있어요. ⚠️ 알아두실 점 — 배터리 교체만을 위한 방문 수리는 불가능해요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-- Actual Answer Clean: 휴대폰 액정 수리는 가까운 서비스센터 방문으로 바로 접수하는 게 가장 빠르고, 필요하면 방문 수리도 전화로 신청할 수 있어요. 가장 빠른 방법: 서비스센터 방문 접수 가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요. 집에서 받고 싶다면: 방문 수리 신청 전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.) 삼성케어플러스 가입 중이면 수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요. 액정 파손 수리는 파손된 액정 반납 조건이 있어요. ⚠️ 알아두실 점 — 배터리 교체만을 위한 방문 수리는 불가능해요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-- Answer Raw: 휴대폰 액정 수리는 가까운 서비스센터 방문으로 바로 접수하는 게 가장 빠르고, 필요하면 방문 수리도 전화로 신청할 수 있어요. 가장 빠른 방법: 서비스센터 방문 접수 가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요. 집에서 받고 싶다면: 방문 수리 신청 전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.) 삼성케어플러스 가입 중이면 수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요. 액정 파손 수리는 파손된 액정 반납 조건이 있어요. ⚠️ 알아두실 점 — 배터리 교체만을 위한 방문 수리는 불가능해요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
+- Question: 갤럭시 S26 울트라와 갤럭시 S26 플러스의 차이를 카메라와 화면 그리고 S펜 기준으로 비교해 주세요.
+- Final Answer: 줌 촬영이랑 S펜이 중요하면 S26 울트라, 큰 화면을 좀 더 가볍게 쓰는 게 우선이면 S26+가 맞아요. ⚖️ 카메라·화면·S펜 비교 갤럭시 S26 울트라 갤럭시 S26+ 카메라 ✅ 줌 활용 폭이 큼 — 후면 2억+5천만+5천만+1천만, 3배·5배 광학 + 최대 100배 디지털 일상 촬영에 깔끔 — 후면 5천만+1천만+1,200만, 3배 광학 + 최대 30배 디지털 화면 ✅ 더 크게 몰입 — 6.9형 QHD+ 120Hz 6.7형 QHD+ 120Hz S펜 ✅ 지원 미지원 이렇게 고르시면 결정이 쉬워요 여행/공연/아이 사진처럼 멀리 있는 피사체를 자주 당겨 찍으면 → 울트라가 만족도가 높아요. 필기·서명·스크린 위 메모가 필요하면 → S펜 때문에 선택지가 사실상 울트라로 정리돼요. 큰 화면은 좋지만 손목 부담은 줄이고 싶으면 → S26+가 더 편한 쪽이에요. ⚠️ 알아두실 점 — S26+는 S펜을 지원하지 않아서, S펜이 필수면 울트라가 더 빠르게 결정됩니다.
 - Extraction Source: dom
-- Message History Clean: 휴대폰 액정 수리 접수는 어떻게 하나요?
-휴대폰 액정 수리는 가까운 서비스센터 방문으로 바로 접수하는 게 가장 빠르고, 필요하면 방문 수리도 전화로 신청할 수 있어요. 가장 빠른 방법: 서비스센터 방문 접수 가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요. 집에서 받고 싶다면: 방문 수리 신청 전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.) 삼성케어플러스 가입 중이면 수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요. 액정 파손 수리는 파손된 액정 반납 조건이 있어요. ⚠️ 알아두실 점 — 배터리 교체만을 위한 방문 수리는 불가능해요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-최근 확인한 갤럭시 S26+ 자급제 (삼성닷컴/삼성 강남 전용컬러) 관련 기획전 알려주세요.
-가까운 서비스센터 방문
-가장 빠른 방법: 서비스센터 방문 접수
-가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요.
-전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.)
-수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요.
-액정 파손 수리는 파손된 액정 반납 조건이 있어요.
-- Overall Score: 3.4
-- Needs Human Review: True
-- Opened Footer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023024_case02_opened_footer.png
-- Before Send Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023024_case02_before_send.png
-- After Answer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023024_case02_after_answer.png
-- Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260406_023024_case02_after_answer.png
-- Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023024_case02_after_answer.png
-
-### Input Candidates (case02)
-
-- score=80.0 selector=textarea scope=spr-chat__box-frame visible=True editable=True disabled=False grade=? reason=?
-
-### Answer Extraction Debug (case02)
-
-- selected_source=message_history_recovered
-- raw_len=401
-- clean_len=401
-- removed_followups=False
-- noise_lines_removed=14
-
-### Message History (case02)
-
-- 휴대폰 액정 수리 접수는 어떻게 하나요?
-- 휴대폰 액정 수리는 가까운 서비스센터 방문으로 바로 접수하는 게 가장 빠르고, 필요하면 방문 수리도 전화로 신청할 수 있어요. 가장 빠른 방법: 서비스센터 방문 접수 가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요. 집에서 받고 싶다면: 방문 수리 신청 전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.) 삼성케어플러스 가입 중이면 수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요. 액정 파손 수리는 파손된 액정 반납 조건이 있어요. ⚠️ 알아두실 점 — 배터리 교체만을 위한 방문 수리는 불가능해요. 고객 지원과 관련한 더 자세한 내용은 삼성전자 CS AI 챗봇을 통해 확인해 주세요.
-- 최근 확인한 갤럭시 S26+ 자급제 (삼성닷컴/삼성 강남 전용컬러) 관련 기획전 알려주세요.
-- 가까운 서비스센터 방문
-- 가장 빠른 방법: 서비스센터 방문 접수
-- 가까운 삼성전자 서비스센터에 제품을 가져가시면 접수 후 액정 점검/교체 안내를 받을 수 있어요.
-- 전화로 방문 수리를 신청할 수 있어요. (고객 과실로 인한 방문 수리는 출장비가 발생할 수 있어요.)
-- 수리 비용 결제 시 별도 청구 없이 혜택이 자동 적용되고, 자기부담금만 내면 돼요.
-- 액정 파손 수리는 파손된 액정 반납 조건이 있어요.
+- Score: 9.0
 
 
 ## case03
 
-- Question: 주문 배송 조회는 어디에서 확인할 수 있나요?
-- Input DOM Verified: True
-- Submit Effect Verified: True
-- Input Scope: spr-chat__box-frame
-- Input Selector: textarea
-- Input Candidate Score: 80
-- Input Failure Category: (none)
-- Input Failure Reason: (none)
-- Top Candidate Placeholder: 무엇이든 물어보세요.
-- Top Candidate Aria: 무엇이든 물어보세요.
-- Input Ready Wait Attempted: True
-- Input Ready Wait Result: ready_already_present
-- Input Verified: True
-- Input Method: fill
-- Submit Method Used: button_click
-- User Message Echo Verified: True
-- New Bot Response Detected: True
-- Top Candidate Disabled: False
-- Transition Ready: False
-- Transition Timeout: False
-- Transition Reason: (none)
-- Transition History: []
-- Activation Attempted: False
-- Activation Steps Tried: (none)
-- Editable Candidates Count: 1
-- Failover Attempts: 1
-- Final Input Target Frame: spr-chat__box-frame
-- SDK Status: has_sprchat=True trigger_exists=True
-- Availability Status: unknown
-- Open Method Used: ui_star_launcher
-- Status: success
-- Actual Answer: 주문/배송 조회는 삼성닷컴 ‘주문/배송 조회’ 메뉴에서 확인하실 수 있어요. 로그인 상태라면 상단의 마이페이지로 들어가서 주문/배송 조회에서 주문별 배송 진행 상황을 볼 수 있어요. 비회원으로 주문하셨다면 비회원 주문조회에서 주문 정보로 조회하실 수 있어요. ⚠️ 알아두실 점 — 주문 상태가 ‘배송 중’으로 바뀐 뒤에는 택배사 이동 과정에 따라 업데이트가 잠시 늦게 보일 수 있어요. 주문/배송조회로 이동하기
-- Actual Answer Clean: 주문/배송 조회는 삼성닷컴 ‘주문/배송 조회’ 메뉴에서 확인하실 수 있어요. 로그인 상태라면 상단의 마이페이지로 들어가서 주문/배송 조회에서 주문별 배송 진행 상황을 볼 수 있어요. 비회원으로 주문하셨다면 비회원 주문조회에서 주문 정보로 조회하실 수 있어요. ⚠️ 알아두실 점 — 주문 상태가 ‘배송 중’으로 바뀐 뒤에는 택배사 이동 과정에 따라 업데이트가 잠시 늦게 보일 수 있어요. 주문/배송조회로 이동하기
-- Answer Raw: 주문/배송 조회는 삼성닷컴 ‘주문/배송 조회’ 메뉴에서 확인하실 수 있어요. 로그인 상태라면 상단의 마이페이지로 들어가서 주문/배송 조회에서 주문별 배송 진행 상황을 볼 수 있어요. 비회원으로 주문하셨다면 비회원 주문조회에서 주문 정보로 조회하실 수 있어요. ⚠️ 알아두실 점 — 주문 상태가 ‘배송 중’으로 바뀐 뒤에는 택배사 이동 과정에 따라 업데이트가 잠시 늦게 보일 수 있어요. 주문/배송조회로 이동하기
+- Question: 갤럭시 북5 프로 360의 무게와 배터리 그리고 포트 구성을 알려주세요.
+- Final Answer: 갤럭시 북5 프로 360은 1.69kg이고, 배터리는 76.1Wh, 포트는 썬더볼트4 2개까지 갖춘 구성이에요. 무게 1.69kg 배터리 76.1Wh 배터리 USB-C 65W 어댑터 포트 구성 HDMI 2.1 1개 Thunderbolt 4 2개 USB 3.2 1개 microSD 카드 리더 헤드폰/마이크 콤보 잭 이 구성이 실사용에서 좋은 점은 2가지예요. 동글 없이 바로 연결: HDMI + USB-A + microSD가 있어서 발표/사진 옮기기/주변기기 연결이 편해요. 확장성 여유: 썬더볼트4 2개라서 고속 저장장치, 허브, 모니터 연결 같은 확장에 유리해요. 💰 구매 때 같이 보면 좋은 혜택 PC 전용 **결제일 할인 7%**이 잡혀 있어서, 카드 결제 계획이 있으시면 체감가를 낮추기 . ⚠️ 알아두실 점 — 배터리 사용 시간은 화면 밝기/네트워크/사용 앱에 따라 달라질 수 있어요.
 - Extraction Source: dom
-- Message History Clean: 주문 배송 조회는 어디에서 확인할 수 있나요?
-주문/배송 조회는 삼성닷컴 ‘주문/배송 조회’ 메뉴에서 확인하실 수 있어요. 로그인 상태라면 상단의 마이페이지로 들어가서 주문/배송 조회에서 주문별 배송 진행 상황을 볼 수 있어요. 비회원으로 주문하셨다면 비회원 주문조회에서 주문 정보로 조회하실 수 있어요. ⚠️ 알아두실 점 — 주문 상태가 ‘배송 중’으로 바뀐 뒤에는 택배사 이동 과정에 따라 업데이트가 잠시 늦게 보일 수 있어요. 주문/배송조회로 이동하기
-- Overall Score: 5.0
-- Needs Human Review: False
-- Opened Footer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023955_case03_opened_footer.png
-- Before Send Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023955_case03_before_send.png
-- After Answer Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023955_case03_after_answer.png
-- Fullpage Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/fullpage/20260406_023955_case03_after_answer.png
-- Chat Screenshot: /workspaces/Rubicon_evaluation/samsung-rubicon-qa/artifacts/chatbox/20260406_023955_case03_after_answer.png
+- Score: 8.6
 
-### Input Candidates (case03)
 
-- score=80.0 selector=textarea scope=spr-chat__box-frame visible=True editable=True disabled=False grade=? reason=?
+## case04
 
-### Answer Extraction Debug (case03)
+- Question: 갤럭시 버즈3 프로의 배터리 시간과 방수 등급 그리고 주요 오디오 기능을 알려주세요.
+- Final Answer: 갤럭시 버즈3 프로는 최대 30시간 재생, IP57 생활방수, 적응형 ANC 같은 오디오 기능이 핵심이에요. 배터리 시간 ANC 켬: 이어버드 최대 6시간, 케이스 포함 최대 26시간 ANC 끔: 이어버드 최대 7시간, 케이스 포함 최대 30시간 방수 등급 IP57 주요 오디오 기능 액티브 노이즈 캔슬링과 Adaptive ANC 주변 소리 듣기, 대화 감지, 사이렌 감지 360 오디오 2-way 스피커, Adaptive EQ Super Wide Band, 마이크 6개 고음질 코덱: SSC-UHQ 포함 이 스펙으로 구매가 정리되는 포인트는 이렇게 보시면 . 출퇴근·카페처럼 주변 소음이 있는 환경이면 ANC와 대화 감지 조합이 체감이 커요. 비·땀 걱정 있는 운동/야외 사용이면 IP57이라 일상 사용에 든든한 쪽이에요. ⚠️ 알아두실 점 — 버즈3 프로는 현재 실버/화이트 모두 재고가 없어, 빠르게 받아보실 제품이 필요하시면 버즈4 시리즈 쪽으로 같이 비교해드릴게요.
+- Extraction Source: dom
+- Score: 7.8
 
-- selected_source=wait_verified
-- raw_len=229
-- clean_len=229
-- removed_followups=False
-- noise_lines_removed=13
 
-### Message History (case03)
+## case05
 
-- 주문 배송 조회는 어디에서 확인할 수 있나요?
-- 주문/배송 조회는 삼성닷컴 ‘주문/배송 조회’ 메뉴에서 확인하실 수 있어요. 로그인 상태라면 상단의 마이페이지로 들어가서 주문/배송 조회에서 주문별 배송 진행 상황을 볼 수 있어요. 비회원으로 주문하셨다면 비회원 주문조회에서 주문 정보로 조회하실 수 있어요. ⚠️ 알아두실 점 — 주문 상태가 ‘배송 중’으로 바뀐 뒤에는 택배사 이동 과정에 따라 업데이트가 잠시 늦게 보일 수 있어요. 주문/배송조회로 이동하기
+- Question: 갤럭시 워치 울트라와 갤럭시 워치7의 차이를 배터리와 운동 기능 중심으로 비교해 주세요.
+- Final Answer: 배터리·야외 운동을 ‘길게’ 가져가면 갤럭시 워치 울트라, 일상 운동을 가볍게 기록하면 갤럭시 워치7이 맞아요. ⚖️ 배터리·운동 기준 핵심 차이 갤럭시 워치 울트라 갤럭시 워치7 배터리 지속 ✅ 장거리 활동에 유리 — AOD 끔 최대 80시간, AOD 켬 최대 60시간 AOD 끔 최대 40시간, AOD 켬 최대 30시간 야외 운동 모드 ✅ 야외 운동 오래 추적 — 운동 중 절전 모드 GPS 최대 48시간 일반적인 운동 기록 중심 내구·수영/야외 ✅ 더 강한 내구/방수 — 10ATM 5ATM 운동 기능 관점에서 이렇게 갈려요 워치 울트라는 등산/트레일런/장거리 사이클처럼 “GPS 켜고 오래” 하는 분들한테 체감이 커요. 배터리랑 내구 쪽에 포커스가 맞춰져 있어요. 워치7은 러닝/헬스/걷기 같은 “일상 운동 기록 + 건강 지표”를 편하게 보는 흐름에 잘 맞아요. 리뷰에서도 자동 운동 인식, 수면·심박·에너지/컨디션 트래킹 만족도가 많이 언급돼요. 💰 구매 관점 포인트 워치 울트라 2025는 즉시 할인(예: 11%)과 네이버페이 포인트 쿠폰 등 혜택이 함께 잡혀 있어요. 워치7은 현재 44mm(블루투스/LTE) 기준으로 재고가 없는 상태라, 빠르게 받아보셔야 하면 울트라 쪽이 더 현실적인 선택이에요. ⚠️ 알아두실 점 — 워치 울트라는 47mm 단일 사이즈라, 손목이 가는 편이시면 착용감이 더 중요 포인트가 될 수 있어요.
+- Extraction Source: dom
+- Score: 7.8
+
+
+## case06
+
+- Question: 삼성 OLED TV와 Neo QLED TV의 차이를 화질과 밝기 그리고 게임용 활용 기준으로 비교해 주세요.
+- Final Answer: 어두운 장면의 ‘블랙·명암’ 몰입이 우선이면 삼성 OLED, 대낮 거실처럼 ‘밝은 환경’과 ‘초고주사율 게이밍’까지 욕심내면 Neo QLED가 더 잘 맞아요. ⚖️ 화질·밝기·게임 기준 핵심 차이 삼성 OLED TV 삼성 Neo QLED TV 화질 성향 ✅ 블랙이 진하고 명암이 또렷 — 자체 발광 픽셀 밝은 장면 디테일에 강점 — 퀀텀 Mini LED 정밀 제어 밝은 거실 시청 조명·햇빛 반사가 신경 쓰이면 설치 환경 체크 권장 ✅ 눈부심 억제에 유리한 모델 존재 — Glare Free 지원 모델 게임 활용 4K 120Hz, ALLM/VRR/FreeSync 지원 모델 다수 ✅ 더 높은 주사율까지 가능 — 4K 165Hz 지원 모델 존재 게임용으로 실제 체감이 갈리는 포인트 콘솔 게임 중심이면(PS/Xbox 등) 두 라인업 모두 4K 120Hz급 구성이 가능해서, 최종 선택은 “어두운 장면 표현”을 더 중시하는지(=OLED) “밝은 거실 + 화면 반사 억제”를 더 중시하는지(=Neo QLED)로 갈리는 경우가 많아요. PC로 고주사율까지 뽑는 게임을 하시면 Neo QLED 쪽이 선택이 쉬워요. 4K 165Hz까지 지원하는 모델이 있어서 FPS/레이싱에서 움직임이 더 매끈하게 느껴집니다. ⭐ 지금 바로 비교해 보기 좋은 대표 모델 OLED 예시: 무빙스타일 OLED 55형은 4K 120Hz와 FreeSync Premium까지 갖춘 구성이라, OLED 화질로 게임까지 즐기기 . Neo QLED 예시: Neo QLED QNF90 75형은 4K 165Hz(PC 게임), FreeSync Premium Pro까지 지원해서 ‘게임 성능’ 쪽으로 확실히 밀어줘요. 💰 가격 흐름 OLED 예시 모델은 특가가 적용되어 있고, Neo QLED 예시 모델도 특가가 적용되어 있어요. ⚠️ 알아두실 점 — 정확한 체감은 설치 환경(거실 채광/조명)과 주 사용 기기(콘솔 vs PC)에 따라 갈려서, 두 가지만 정리하면 사이즈까지 딱 맞춰 추천을 좁혀드릴 수 있어요.
+- Extraction Source: dom
+- Score: 3.4
+
+
+## case07
+
+- Question: 비스포크 AI 콤보 세탁건조기의 세탁 용량과 건조 용량 그리고 AI 기능을 알려주세요.
+- Final Answer: 사진을 ‘줌까지 제대로’ 찍고 S펜까지 쓰실 거면 S26 울트라, 화면 큰 폰을 더 가볍게 쓰고 싶으면 S26+가 맞아요.
+⚖️ 카메라·화면·S펜 비교 포인트
+갤럭시 S26 울트라	갤럭시 S26+
+카메라	✅ 줌 활용 폭이 큼 — 후면 2억+5천만+5천만+1천만, 3배·5배 광학 + 최대 100배 디지털	일상·인물/풍경 위주에 깔끔 — 후면 5천만+1천만+1,200만, 3배 광학 + 최대 30배 디지털
+화면	✅ 더 크게 몰입 — 6.9형 QHD+ 120Hz	6.7형 QHD+ 120Hz
+S펜	✅ 지원	미지원
+이 차이가 실사용에서 이렇게 갈려요
+카메라 기준: 여행/공연/아이 사진처럼 “멀리 있는 피사체를 자주 당겨 찍는 분”은 울트라의 3배+5배 망원 조합이 만족도가 높아요.
+화면 기준: 둘 다 선명한 QHD+인데, 울트라는 더 큰 캔버스라 영상·문서·멀티태스킹이 더 시원해요.
+S펜 기준: 필기/서명/스크린 위 메모 같은 작업이 잦으면 선택지가 사실상 울트라로 정리됩니다.
+참고로 구매 만족 포인트
+S26 울트라는 리뷰에서 카메라·AI 기능·큰 화면 + S펜 조합이 특히 많이 언급돼요.
+S26+는 가볍고 균형 잡힌 그립감 + 일상 카메라 만족도가 높게 나와요.
+⚠️ 알아두실 점 — S26+는 S펜을 지원하지 않아서, S펜이 ‘필수’면 울트라 쪽이 더 빠르게 결정돼요.
+갤럭시 S26 울트라 자급제 (SM-S948NZKRKOO)
+⭐ 4.9 (15026)
+2,394,200원
+2,545,400원
+151,200원 할인
+더 알아보기
+갤럭시 S26+ 자급제 (SM-S947NZKEKOO)
+⭐ 4.9 (3738)
+1,578,000원
+1,705,000원
+127,000원 할인
+더 알아보기
+갤럭시 S26+ 자급제 (SM-S947NLBAKOO)
+⭐ 4.9 (3738)
+1,408,000원
+1,452,000원
+44,000원 할인
+더 알아보기
+갤럭시 S26 울트라 자급제 (SM-S948NZVWKOO)
+⭐ 4.9 (15026)
+1,913,400원
+2,050,400원
+137,000원 할인
+더 알아보기
+- Extraction Source: dom
+- Score: 1.0
+
+
+## case08
+
+- Question: 비스포크 냉장고의 용량과 에너지 절약 기능 그리고 Family Hub 같은 스마트 기능을 알려주세요.
+- Final Answer: 비스포크 냉장고는 600L대부터 800L대까지 용량 폭이 넓고, SmartThings 기반 ‘AI 절약 모드’와 Family Hub 같은 대화면 스마트 기능이 대표 포인트예요. 용량 예시 키친핏 Max 4도어: 633L~640L급 패밀리허브 4도어: 864L급 에너지 절약 기능 AI 절약 모드: 사용 패턴을 학습해 에너지 소비를 줄이도록 냉장고가 스스로 조절해요. 1단계는 최대 12~15%, 2단계는 **최대 20~25%**까지 절약 모드 선택이 가능해요. SmartThings Energy에서 월간 목표 사용량 기반으로 관리할 수 있어요. Family Hub 같은 스마트 기능 Family Hub 대화면 디스플레이: 냉장고에서 바로 정보 확인/가족 공유/기기 제어 같은 ‘주방 허브’ 역할로 쓰기 . AI 비전 인사이드 + AI 푸드매니저: 식재료를 더 편하게 관리하도록 돕는 구성(지원 모델 기준) Wi‑Fi + SmartThings 연동: 냉장고 상태 확인, 에너지 관리, 홈케어 등 스마트 관리 구매 결정을 빠르게 하려면 2가지만 먼저 정하면 . 설치 타입: 빌트인 느낌을 원하면 키친핏 Max, 공간 여유가 있으면 프리스탠딩 패밀리허브 필요성: 주방에서 화면 활용(가족 일정/메모/레시피/기기 제어)을 자주 하시면 패밀리허브가 체감이 큽니다. ⚠️ 알아두실 점 — ‘패밀리허브’와 ‘AI 비전 인사이드’는 모든 비스포크 냉장고에 공통은 아니고, 모델별로 지원 여부가 달라요.
+- Extraction Source: dom
+- Score: 8.8
+
+
+## case09
+
+- Question: 오디세이 OLED G8과 오디세이 Neo G9의 차이를 화면 크기와 주사율 그리고 게임 몰입감 기준으로 비교해 주세요.
+- Final Answer: 화질 몰입감 자체는 OLED G8, ‘시야를 꽉 채우는’ 압도적인 몰입은 Neo G9이 더 강해요. 둘 다 240Hz라 속도는 동급이고, 차이는 “화면 형태와 체감 크기”에서 갈립니다. ⚖️ 화면 크기·주사율·몰입감 비교 오디세이 OLED G8 32형 4K 240Hz 오디세이 Neo G9 57형 DUHD 240Hz 화면 크기 32형 16:9 ✅ 57형 32:9 초울트라와이드 주사율 240Hz 240Hz 게임 몰입감 ✅ 블랙·명암이 또렷 — OLED로 어두운 맵/공포/영화 감상까지 만족감 큼 ✅ 시야를 감싸는 몰입 — 1000R 커브드 + 초광폭 화면으로 레이싱/오픈월드에 특히 유리 실사용 기준으로 이렇게 고르시면 쉬워요 FPS나 어두운 장면 많은 게임, 콘솔·OTT도 같이 → OLED G8이 “화면이 좋다” 체감이 확실해요. 리뷰에서도 OLED 색감·블랙, 4K 선명함, 반응성 만족이 많이 나와요. 레이싱/비행/오픈월드, 멀티태스킹까지 한 번에 → Neo G9이 ‘한 대로 끝’ 느낌이 강해요. 화면이 워낙 커서 게임뿐 아니라 작업창 여러 개 띄우는 생산성 얘기도 리뷰에 많이 나옵니다. 💰 가격/구매 포인트 OLED G8 32형 4K 240Hz:
+- Extraction Source: dom
+- Score: 4.3
+
+
+## case10
+
+- Question: 갤럭시 링의 배터리 지속시간과 건강 센서 그리고 지원 기능을 알려주세요.
+- Final Answer: 갤럭시 링은 사이즈에 따라 한 번 충전으로 최대 6~7일까지 쓰고, 3개 센서로 수면·심박·체온 변화를 꾸준히 기록하는 웨어러블이에요. 손목이 불편한 분들이 ‘수면/건강 트래킹’을 가볍게 가져가기에 특히 . 배터리 지속시간 최대 7일 사용 가능(예: 12~15호) 사이즈별로 차이가 있어요 5~7호: 최대 6일 8~11호: 최대 6일 12~15호: 최대 7일 건강 센서 가속도 센서 광학 심박 센서 온도 센서 지원 기능 수면 측정/수면 인사이트 운동 자동 인식 삼성 헬스 연동으로 건강 데이터 기록/분석 갤럭시 폰과 블루투스 연결 Bluetooth 5.4 내구: 10ATM + IP68 이 정보로 구매 판단이 한 단계 정리돼요. 손목형(워치) 대신 가볍게 24시간 착용하면서 수면 위주로 관리하려면 갤럭시 링이 잘 맞고, 운동 중 화면 확인/알림/앱 실행까지 원하시면 워치가 더 맞는 흐름이에요. 리뷰에서도 가볍고 편해서 수면 때 부담이 적다, 수면 측정/에너지 점수 같은 건강 인사이트가 유용하다, 배터리를 며칠씩 쓰기 편하다는 얘기가 많이 나와요. ⚠️ 알아두실 점 — 갤럭시 링은 Android 11 이상, 메모리 1.5GB 이상 스마트폰과 페어링이 필요하고, 갤럭시 웨어러블 앱·삼성 헬스 앱·삼성 계정 로그인이 필요해요.
+- Extraction Source: dom
+- Score: 3.9

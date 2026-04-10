@@ -26,6 +26,8 @@ def test_run_result_flatten_includes_new_fields():
             extraction_confidence=1.0,
             response_ms=1000,
             status="success",
+            run_mode="speed",
+            fast_path_used=True,
             actual_answer="서비스센터에서 가능합니다.",
             actual_answer_clean="서비스센터에서 가능합니다.",
             extraction_source_detail="dom_main_answer",
@@ -92,5 +94,7 @@ def test_run_result_flatten_includes_new_fields():
         "message_history_clean",
         "removed_followups",
         "noise_lines_removed",
+        "run_mode",
+        "fast_path_used",
     ]:
         assert field in flat
