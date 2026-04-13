@@ -12,7 +12,7 @@ import pytest
 from app.config import AppConfig
 from app.evaluator import fallback_evaluation
 from app.models import EvalResult, ExtractedPair, RunResult, TestCase
-from app.report_writer import _build_summary, write_reports
+from app.report_writer import _build_summary, format_case_console_block, write_reports
 from app.utils import utc_now_timestamp
 
 
@@ -43,7 +43,7 @@ def _make_config(tmpdir: str) -> AppConfig:
     )
 
 
-def _make_result(case_id: str = "c01", status: str = "success", score: float = 0.8, run_mode: str = "speed") -> RunResult:
+def _make_result(case_id: str = "c01", status: str = "success", score: float = 8.0, run_mode: str = "speed") -> RunResult:
     test_case = TestCase(
         id=case_id,
         category="service",
@@ -65,23 +65,32 @@ def _make_result(case_id: str = "c01", status: str = "success", score: float = 0
         extraction_confidence=1.0,
         response_ms=1200,
         status=status,
+        raw_answer="서비스센터에서 가능합니다. 추가 문의는 CS AI 챗봇에 문의",
+        cleaned_answer="서비스센터에서 가능합니다.",
         run_mode=run_mode,
         answer_raw="서비스센터에서 가능합니다.",
         answer_normalized="서비스센터에서 가능합니다.",
         actual_answer="서비스센터에서 가능합니다.",
         actual_answer_clean="서비스센터에서 가능합니다.",
+        cta_stripped=True,
         error_message="" if status == "success" else "timeout",
     )
     evaluation = EvalResult(
         overall_score=score,
-        relevance_score=score,
-        clarity_score=score,
-        completeness_score=score,
+        score_scale="0-10",
+        evaluation_language="ko",
+        correctness_score=3.2,
+        relevance_score=1.8,
+        completeness_score=1.7,
+        clarity_score=0.7,
+        groundedness_score=0.6,
+        score_breakdown_explanation="질문에 맞는 정보를 비교적 명확하게 제공했습니다.",
         keyword_alignment_score=score,
         hallucination_risk="low",
         needs_human_review=False,
-        reason="Good answer",
+        reason="질문에 맞는 답변입니다.",
         fix_suggestion="",
+        flags=[],
     )
     return RunResult(test_case=test_case, pair=pair, evaluation=evaluation)
 
@@ -108,6 +117,11 @@ class TestWriteReports:
             assert len(data) == 1
             assert data[0]["case_id"] == "c01"
             assert data[0]["question"] == "배터리 교체는 어디서?"
+            assert data[0]["reason"] == "질문에 맞는 답변입니다."
+            assert data[0]["fix_suggestion"] == ""
+            assert data[0]["flags"] == ""
+            assert data[0]["score_scale"] == "0-10"
+            assert data[0]["evaluation_language"] == "ko"
             assert "evaluation" in data[0]
 
     def test_csv_report_has_expected_columns(self):
@@ -128,6 +142,10 @@ class TestWriteReports:
             assert "availability_status" in rows[0]
             assert "pair_answer" in rows[0]
             assert "eval_overall_score" in rows[0]
+            assert "eval_score_scale" in rows[0]
+            assert "eval_score_breakdown_explanation" in rows[0]
+            assert "flags" in rows[0]
+            assert "eval_flags" in rows[0]
 
     def test_empty_results_writes_valid_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -150,6 +168,11 @@ class TestBuildSummary:
         assert "실패 수: 1" in summary
         assert "Question: 배터리 교체는 어디서?" in summary
         assert "Final Answer: 서비스센터에서 가능합니다." in summary
+        assert "Evaluation Language: ko" in summary
+        assert "Score Breakdown:" in summary
+        assert "Reason: 질문에 맞는 답변입니다." in summary
+        assert "Fix Suggestion: (none)" in summary
+        assert "Flags: (none)" in summary
 
     def test_summary_dom_extraction_count(self):
         results = [_make_result("c01"), _make_result("c02")]
@@ -255,6 +278,11 @@ class TestBuildConversation:
         assert "Video Path:" in content
         assert "### Input Candidates (c01)" in content
         assert "### Answer Extraction Debug (c01)" in content
+        assert "Reason:" in content
+        assert "Fix Suggestion:" in content
+        assert "Score Breakdown:" in content
+        assert "Score Breakdown Explanation:" in content
+        assert "Flags:" in content
 
     def test_conversation_allows_empty_artifact_paths_on_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -263,8 +291,61 @@ class TestBuildConversation:
             paths = write_reports(config, [_make_result("c01")])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "Final Answer: 서비스센터에서 가능합니다." in content
+        assert "Evaluation Language: ko" in content
+        assert "Score: 8.0 / 10" in content
+        assert "Raw/Clean Diff: cleaned" in content
+        assert "Cleaning Applied: cta_stripped" in content
+        assert "Reason: 질문에 맞는 답변입니다." in content
+        assert "Fix Suggestion: (none)" in content
+        assert "Error Category: (none)" in content
+        assert "Language Policy Check: pass" in content
+        assert "Flags: (none)" in content
         assert "Screenshot Path:" not in content
         assert "Video Path:" not in content
+
+    def test_conversation_includes_priority_error_category(self):
+        result = _make_result("c01", status="failed", run_mode="debug")
+        result = replace(
+            result,
+            evaluation=replace(
+                result.evaluation,
+                flags=["promo_or_product_card_leak", "question_repetition", "truncated_answer"],
+                overall_score=0.5,
+                reason="답변이 질문을 반복합니다.",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Error Category: question_repetition" in content
+
+    def test_conversation_marks_language_policy_failure(self):
+        result = _make_result("c01", status="failed", run_mode="debug")
+        result = replace(
+            result,
+            evaluation=replace(
+                result.evaluation,
+                reason="The answer is weak and incomplete.",
+                fix_suggestion="Retry extraction.",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Language Policy Check: fail" in content
+
+    def test_console_block_includes_reason_fix_and_flags(self):
+        block = format_case_console_block(_make_result("c01"))
+        assert "EVALUATION LANGUAGE:" in block
+        assert "SCORE BREAKDOWN:" in block
+        assert "SCORE BREAKDOWN EXPLANATION:" in block
+        assert "REASON:" in block
+        assert "FIX SUGGESTION:" in block
+        assert "FLAGS:" in block
 
     def test_conversation_empty_history(self):
         """Speed success conversation omits message history section entirely."""

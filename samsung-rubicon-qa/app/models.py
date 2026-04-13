@@ -2,9 +2,59 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+
+ERROR_CATEGORY_PRIORITY = [
+    "question_repetition",
+    "off_topic_or_carryover",
+    "truncated_answer",
+    "speculative_unverified",
+    "promo_or_product_card_leak",
+    "weak_keyword_alignment",
+    "too_short",
+]
+
+
+def _detect_text_language(question: str, locale: str = "") -> str:
+    normalized_locale = (locale or "").lower()
+    if normalized_locale.startswith("ko"):
+        return "ko"
+    if normalized_locale.startswith("en"):
+        return "en"
+    if len(re.findall(r"[가-힣]", question or "")) >= 3:
+        return "ko"
+    return "en"
+
+
+def _looks_english_heavy(text: str) -> bool:
+    lowered = str(text or "").lower()
+    english_words = re.findall(r"\b[a-z]{3,}\b", lowered)
+    return len(english_words) >= 3 and not re.search(r"[가-힣]", lowered)
+
+
+def _looks_korean_heavy(text: str) -> bool:
+    return len(re.findall(r"[가-힣]", str(text or ""))) >= 3
+
+
+def _language_policy_check(question: str, locale: str, reason: str, fix_suggestion: str) -> str:
+    target_language = _detect_text_language(question, locale)
+    combined = " ".join(part for part in [reason, fix_suggestion] if part).strip()
+    if not combined:
+        return "pass"
+    if target_language == "ko":
+        return "pass" if _looks_korean_heavy(combined) else "fail"
+    return "fail" if _looks_korean_heavy(combined) else "pass"
+
+
+def _primary_error_category(flags: list[str]) -> str:
+    for flag in ERROR_CATEGORY_PRIORITY:
+        if flag in flags:
+            return flag
+    return "(none)"
 
 
 @dataclass(slots=True)
@@ -35,12 +85,16 @@ class ExtractedPair:
     extraction_confidence: float
     response_ms: int
     status: Literal["success", "failed", "invalid_capture"]
+    raw_answer: str = ""
+    cleaned_answer: str = ""
     answer_raw: str = ""
     answer_normalized: str = ""
     actual_answer: str = ""
     actual_answer_clean: str = ""
     extraction_source_detail: str = ""
     message_history_clean: str = ""
+    cta_stripped: bool = False
+    promo_stripped: bool = False
     removed_followups: bool = False
     noise_lines_removed: int = 0
     reason: str = ""
@@ -106,6 +160,9 @@ class ExtractedPair:
     ocr_confidence: float = 0.0
     structured_message_history_count: int = 0
     fallback_diff_used: bool = False
+    question_repetition_detected: bool = False
+    truncated_answer_detected: bool = False
+    needs_retry_extraction: bool = False
     message_history: list[str] = field(default_factory=list)
 
 
@@ -114,14 +171,20 @@ class EvalResult:
     """LLM evaluation outcome for an extracted pair."""
 
     overall_score: float
+    score_scale: str
+    evaluation_language: Literal["ko", "en"]
+    correctness_score: float
     relevance_score: float
-    clarity_score: float
     completeness_score: float
+    clarity_score: float
+    groundedness_score: float
+    score_breakdown_explanation: str
     keyword_alignment_score: float
     hallucination_risk: Literal["low", "medium", "high"]
     needs_human_review: bool
     reason: str
     fix_suggestion: str
+    flags: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -131,6 +194,10 @@ class RunResult:
     test_case: TestCase
     pair: ExtractedPair
     evaluation: EvalResult
+
+    @staticmethod
+    def _serialize_flags(flags: list[str]) -> str:
+        return "|".join(flags)
 
     def to_nested_dict(self) -> dict[str, Any]:
         """Convert the result to a JSON-serializable dictionary."""
@@ -148,11 +215,24 @@ class RunResult:
         record = self.to_result_record()
         data.update({key: value for key, value in record.items() if key != "evaluation"})
         data.update({f"pair_{key}": value for key, value in asdict(self.pair).items()})
-        data.update({f"eval_{key}": value for key, value in asdict(self.evaluation).items()})
+        evaluation_dict = asdict(self.evaluation)
+        evaluation_dict["flags"] = self._serialize_flags(self.evaluation.flags)
+        data.update({f"eval_{key}": value for key, value in evaluation_dict.items()})
         return data
 
     def to_result_record(self) -> dict[str, Any]:
         """Build the primary result payload consumed by reports/latest_results.json."""
+
+        evaluation_reason = self.evaluation.reason or self.pair.reason
+        evaluation_fix_suggestion = self.evaluation.fix_suggestion or self.pair.fix_suggestion
+        serialized_flags = self._serialize_flags(self.evaluation.flags)
+        language_policy = _language_policy_check(
+            self.pair.question,
+            self.pair.locale,
+            evaluation_reason,
+            evaluation_fix_suggestion,
+        )
+        error_category = _primary_error_category(self.evaluation.flags)
 
         return {
             "run_timestamp": self.pair.run_timestamp,
@@ -162,6 +242,8 @@ class RunResult:
             "locale": self.pair.locale,
             "question": self.pair.question,
             "answer": self.pair.answer,
+            "raw_answer": self.pair.raw_answer or self.pair.answer_raw,
+            "cleaned_answer": self.pair.cleaned_answer or self.pair.actual_answer_clean or self.pair.answer,
             "answer_raw": self.pair.answer_raw,
             "answer_normalized": self.pair.answer_normalized,
             "actual_answer": self.pair.actual_answer or self.pair.answer,
@@ -176,10 +258,13 @@ class RunResult:
             "baseline_menu_detected": self.pair.baseline_menu_detected,
             "status": self.pair.status,
             "error_message": self.pair.error_message,
-            "reason": self.pair.reason,
+            "reason": evaluation_reason,
+            "execution_reason": self.pair.reason,
             "run_mode": self.pair.run_mode,
             "fast_path_used": self.pair.fast_path_used,
-            "fix_suggestion": self.pair.fix_suggestion or self.evaluation.fix_suggestion,
+            "fix_suggestion": evaluation_fix_suggestion,
+            "execution_fix_suggestion": self.pair.fix_suggestion,
+            "flags": serialized_flags,
             "message_history": self.pair.message_history,
             "message_history_clean": self.pair.message_history_clean,
             "html_fragment_path": self.pair.html_fragment_path,
@@ -187,12 +272,17 @@ class RunResult:
             "evidence_json_path": self.pair.evidence_json_path,
             "extraction_source": self.pair.extraction_source,
             "extraction_source_detail": self.pair.extraction_source_detail,
+            "cta_stripped": self.pair.cta_stripped,
+            "promo_stripped": self.pair.promo_stripped,
             "removed_followups": self.pair.removed_followups,
             "noise_lines_removed": self.pair.noise_lines_removed,
             "ocr_text": self.pair.ocr_text,
             "ocr_confidence": self.pair.ocr_confidence,
             "structured_message_history_count": self.pair.structured_message_history_count,
             "fallback_diff_used": self.pair.fallback_diff_used,
+            "question_repetition_detected": self.pair.question_repetition_detected,
+            "truncated_answer_detected": self.pair.truncated_answer_detected,
+            "needs_retry_extraction": self.pair.needs_retry_extraction,
             "input_scope": self.pair.input_scope or self.pair.input_scope_name,
             "input_selector": self.pair.input_selector,
             "input_candidate_score": self.pair.input_candidate_score,
@@ -223,9 +313,19 @@ class RunResult:
             "after_answer_screenshot_path": self.pair.after_answer_screenshot_path,
             "answer_screenshot_paths": self.pair.answer_screenshot_paths,
             "after_answer_multi_page": self.pair.after_answer_multi_page,
+            "error_category": error_category,
+            "language_policy_check": language_policy,
             "full_screenshot_path": self.pair.full_screenshot_path,
             "overall_score": self.evaluation.overall_score,
+            "score_scale": self.evaluation.score_scale,
+            "evaluation_language": self.evaluation.evaluation_language,
+            "correctness_score": self.evaluation.correctness_score,
             "needs_human_review": self.evaluation.needs_human_review,
+            "relevance_score": self.evaluation.relevance_score,
+            "completeness_score": self.evaluation.completeness_score,
+            "clarity_score": self.evaluation.clarity_score,
+            "groundedness_score": self.evaluation.groundedness_score,
+            "score_breakdown_explanation": self.evaluation.score_breakdown_explanation,
             "response_ms": self.pair.response_ms,
             "extraction_confidence": self.pair.extraction_confidence,
             "opened_chat_screenshot_path": self.pair.opened_chat_screenshot_path,

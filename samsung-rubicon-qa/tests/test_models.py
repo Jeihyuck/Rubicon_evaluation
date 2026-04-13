@@ -40,6 +40,8 @@ def _make_pair(case_id: str = "c01") -> ExtractedPair:
         extraction_confidence=1.0,
         response_ms=1000,
         status="success",
+        raw_answer="서비스센터에서 가능합니다.",
+        cleaned_answer="서비스센터에서 가능합니다.",
         answer_raw="서비스센터에서 가능합니다.",
         answer_normalized="서비스센터에서 가능합니다.",
         actual_answer="서비스센터에서 가능합니다.",
@@ -49,15 +51,21 @@ def _make_pair(case_id: str = "c01") -> ExtractedPair:
 
 def _make_eval() -> EvalResult:
     return EvalResult(
-        overall_score=0.9,
-        relevance_score=0.95,
-        clarity_score=0.85,
-        completeness_score=0.9,
-        keyword_alignment_score=0.9,
+        overall_score=8.7,
+        score_scale="0-10",
+        evaluation_language="ko",
+        correctness_score=3.6,
+        relevance_score=1.8,
+        completeness_score=1.7,
+        clarity_score=0.8,
+        groundedness_score=0.8,
+        score_breakdown_explanation="질문 의도에 맞는 정보를 충분히 제공했습니다.",
+        keyword_alignment_score=8.7,
         hallucination_risk="low",
         needs_human_review=False,
-        reason="Good answer",
+        reason="질문에 맞는 답변입니다.",
         fix_suggestion="",
+        flags=[],
     )
 
 
@@ -121,6 +129,13 @@ class TestExtractedPair:
         assert pair.ocr_confidence == 0.0
         assert pair.structured_message_history_count == 0
         assert pair.fallback_diff_used is False
+        assert pair.raw_answer == "서비스센터에서 가능합니다."
+        assert pair.cleaned_answer == "서비스센터에서 가능합니다."
+        assert pair.cta_stripped is False
+        assert pair.promo_stripped is False
+        assert pair.question_repetition_detected is False
+        assert pair.truncated_answer_detected is False
+        assert pair.needs_retry_extraction is False
 
     def test_invalid_capture_status(self):
         pair = _make_pair()
@@ -147,7 +162,8 @@ class TestRunResult:
         assert "evaluation" in nested
         assert nested["test_case"]["id"] == "c01"
         assert nested["pair"]["answer"] == "서비스센터에서 가능합니다."
-        assert nested["evaluation"]["overall_score"] == 0.9
+        assert nested["evaluation"]["overall_score"] == 8.7
+        assert nested["evaluation"]["score_scale"] == "0-10"
 
     def test_to_result_record_structure(self):
         result = RunResult(
@@ -159,6 +175,8 @@ class TestRunResult:
         assert record["case_id"] == "c01"
         assert record["question"] == "배터리 교체는 어디서?"
         assert record["answer"] == "서비스센터에서 가능합니다."
+        assert record["raw_answer"] == "서비스센터에서 가능합니다."
+        assert record["cleaned_answer"] == "서비스센터에서 가능합니다."
         assert record["answer_raw"] == "서비스센터에서 가능합니다."
         assert record["answer_normalized"] == "서비스센터에서 가능합니다."
         assert record["input_dom_verified"] is False
@@ -166,8 +184,13 @@ class TestRunResult:
         assert record["after_answer_multi_page"] is False
         assert record["structured_message_history_count"] == 0
         assert record["fallback_diff_used"] is False
+        assert record["question_repetition_detected"] is False
+        assert record["truncated_answer_detected"] is False
+        assert record["needs_retry_extraction"] is False
         assert record["actual_answer"] == "서비스센터에서 가능합니다."
         assert record["actual_answer_clean"] == "서비스센터에서 가능합니다."
+        assert record["cta_stripped"] is False
+        assert record["promo_stripped"] is False
         assert record["message_history_clean"] == ""
         assert record["extraction_source_detail"] == ""
         assert record["removed_followups"] is False
@@ -192,9 +215,18 @@ class TestRunResult:
         assert record["input_candidate_logs"] == []
         assert record["run_mode"] == "speed"
         assert record["fast_path_used"] is False
-        assert record["overall_score"] == 0.9
+        assert record["overall_score"] == 8.7
+        assert record["score_scale"] == "0-10"
+        assert record["evaluation_language"] == "ko"
+        assert record["correctness_score"] == 3.6
+        assert record["groundedness_score"] == 0.8
+        assert record["score_breakdown_explanation"] == "질문 의도에 맞는 정보를 충분히 제공했습니다."
         assert record["needs_human_review"] is False
         assert record["fix_suggestion"] == ""
+        assert record["reason"] == "질문에 맞는 답변입니다."
+        assert record["flags"] == ""
+        assert record["error_category"] == "(none)"
+        assert record["language_policy_check"] == "pass"
         assert record["category"] == "service"
         assert record["page_url"] == "https://www.samsung.com/sec/"
 
@@ -214,7 +246,10 @@ class TestRunResult:
         assert flat["id"] == "c01"
         assert flat["answer"] == "서비스센터에서 가능합니다."
         assert flat["pair_answer"] == "서비스센터에서 가능합니다."
-        assert flat["eval_overall_score"] == 0.9
+        assert flat["eval_overall_score"] == 8.7
+        assert flat["eval_score_scale"] == "0-10"
+        assert flat["eval_evaluation_language"] == "ko"
+        assert flat["eval_flags"] == ""
 
     def test_to_flat_dict_no_key_conflicts(self):
         result = RunResult(
@@ -228,6 +263,19 @@ class TestRunResult:
         case_keys = set(asdict(_make_test_case()).keys())
         all_expected = case_keys | pair_keys | eval_keys
         assert all_expected.issubset(flat.keys())
+
+    def test_eval_result_flags_default_to_empty_list(self):
+        evaluation = _make_eval()
+        assert evaluation.flags == []
+
+    def test_to_result_record_serializes_flags(self):
+        result = RunResult(
+            test_case=_make_test_case(),
+            pair=_make_pair(),
+            evaluation=replace(_make_eval(), flags=["too_short", "weak_keyword_alignment"]),
+        )
+        record = result.to_result_record()
+        assert record["flags"] == "too_short|weak_keyword_alignment"
 
 
 class TestExtractedPairNewFields:

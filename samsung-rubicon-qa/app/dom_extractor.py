@@ -50,6 +50,23 @@ FOLLOW_UP_SPLIT_MARKERS = [
     "AI 생성 메시지는 부정확할 수 있습니다",
 ]
 
+FOLLOWUP_CTA_PATTERNS = [
+    r"추천 질문",
+    r"다음 질문",
+    r"관련 질문",
+    r"함께 보면 좋은",
+    r"자주 묻는 질문",
+    r"더 알아보기",
+    r"자세히 보기",
+    r"CS AI 챗봇에 문의",
+    r"AI 챗봇에 문의",
+    r"상담원 연결",
+    r"문의하기",
+    r"채팅 상담",
+    r"추가로 궁금하시면",
+    r"원하시면 .* 추천",
+]
+
 COMMERCE_TAIL_SPLIT_MARKERS = [
     "더 알아보기",
 ]
@@ -99,10 +116,279 @@ HISTORY_DUMP_HINTS = [
     "삼성닷컴에서 어떤 제품들을 구매할 수 있나요?",
 ]
 
+PROMO_PATTERNS = [
+    r"구매 혜택",
+    r"할인",
+    r"쿠폰",
+    r"사은품",
+    r"더 알아보기",
+    r"리뷰에서는",
+    r"실사용자 반응",
+    r"사용자 반응",
+    r"즉시 구매",
+    r"현재 구매 가능",
+    r"재고",
+    r"⭐",
+]
+
+PROMO_REVIEW_PATTERNS = [
+    r"리뷰 한줄 요약",
+    r"실사용자 반응",
+    r"리뷰에서는",
+    r"구매 혜택",
+    r"할인",
+    r"쿠폰",
+    r"사은품",
+    r"현재 구매 가능",
+    r"재고",
+    r"대표 모델 예시",
+    r"모델 추천",
+    r"⭐",
+    r"원$",
+    r"더 알아보기",
+]
+
+PROMO_QUESTION_HINTS = [
+    "가격",
+    "혜택",
+    "재고",
+    "구매",
+    "할인",
+    "쿠폰",
+    "사은품",
+    "price",
+    "stock",
+    "availability",
+    "benefit",
+    "discount",
+    "coupon",
+]
+
+TOPIC_FAMILY_KEYWORDS = {
+    "phone": ["갤럭시", "울트라", "플러스", "z fold", "z flip", "스마트폰", "phone", "smartphone", "s24", "s25", "s26"],
+    "laptop": ["갤럭시북", "노트북", "북", "laptop", "notebook", "book4", "book5"],
+    "earbuds": ["버즈", "buds", "이어버드", "이어폰", "earbuds", "earbud", "anc", "ip57"],
+    "watch": ["갤럭시 워치", "워치", "watch", "smartwatch"],
+    "tv": ["tv", "neo qled", "oled tv", "qled", "티비", "television"],
+    "washer": ["세탁기", "건조기", "콤보", "washer", "dryer", "laundry"],
+    "refrigerator": ["냉장고", "김치냉장고", "비스포크 냉장고", "refrigerator", "fridge"],
+    "monitor": ["모니터", "odyssey", "smart monitor", "monitor"],
+    "ring": ["갤럭시 링", "galaxy ring", "ring"],
+}
+
+TRUNCATED_ENDINGS = (
+    ":",
+    "보시는 게 .",
+    "체감이 .",
+    "하기 .",
+    "좋아요 .",
+    "매칭이 .",
+    "더 알아보기",
+)
+
+MIN_CLEAN_ANSWER_LEN = 6
+
 
 def normalize_text_for_diff(text: str) -> str:
     sanitized = re.sub(r"[\u200e\u200f\u202a-\u202e\ufeff]", "", str(text or ""))
     return " ".join(sanitized.replace("\xa0", " ").split())
+
+
+def _normalize_text(text: str) -> str:
+    return normalize_text_for_diff(text).lower()
+
+
+def _is_question_repetition(question: str, answer: str) -> bool:
+    nq = _normalize_text(question)
+    na = _normalize_text(answer)
+    if not nq or not na:
+        return False
+    if na == nq or na == f"{nq} , {nq}" or na == f"{nq}, {nq}":
+        return True
+    return nq in na and len(na) <= len(nq) * 1.4
+
+
+def _detect_topic_family(text: str) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return "unknown"
+
+    best_family = "unknown"
+    best_score = 0
+    for family, keywords in TOPIC_FAMILY_KEYWORDS.items():
+        score = sum(1 for keyword in keywords if keyword in normalized)
+        if score > best_score:
+            best_family = family
+            best_score = score
+    return best_family if best_score > 0 else "unknown"
+
+
+def _looks_truncated(answer: str) -> bool:
+    normalized = _normalize_text(answer)
+    if not normalized:
+        return False
+    if normalized.endswith(TRUNCATED_ENDINGS):
+        return True
+    return bool(re.search(r"(?:sm-[a-z0-9]+|\d{2,3}(?:,\d{3})+원)$", normalized))
+
+
+def _question_allows_promo_text(question: str) -> bool:
+    normalized_question = _normalize_text(question)
+    return any(hint in normalized_question for hint in PROMO_QUESTION_HINTS)
+
+
+def _strip_followup_cta(text: str) -> tuple[str, bool]:
+    normalized = _normalize_multiline_text(text)
+    if not normalized:
+        return "", False
+
+    kept_lines: list[str] = []
+    stripped = False
+    for line in normalized.splitlines():
+        current = line.strip()
+        if not current:
+            continue
+        earliest_match = None
+        for pattern in FOLLOWUP_CTA_PATTERNS:
+            match = re.search(pattern, current, re.IGNORECASE)
+            if match is None:
+                continue
+            if earliest_match is None or match.start() < earliest_match.start():
+                earliest_match = match
+        if earliest_match is None:
+            kept_lines.append(current)
+            continue
+        prefix = current[: earliest_match.start()].rstrip(" ,:;")
+        if prefix:
+            kept_lines.append(prefix)
+        stripped = True
+        break
+
+    candidate = "\n".join(kept_lines).strip() if stripped else normalized
+    earliest_match = None
+    for pattern in FOLLOWUP_CTA_PATTERNS:
+        match = re.search(pattern, candidate, re.IGNORECASE)
+        if match is None:
+            continue
+        if earliest_match is None or match.start() < earliest_match.start():
+            earliest_match = match
+    if earliest_match is not None:
+        prefix = candidate[: earliest_match.start()].rstrip(" ,:;")
+        return prefix, True
+    return candidate, stripped
+
+
+def _strip_promo_review_blocks(text: str, question: str = "") -> tuple[str, bool]:
+    normalized = normalize_text_for_diff(text)
+    if not normalized or _question_allows_promo_text(question):
+        return normalized, False
+
+    kept_lines: list[str] = []
+    stripped = False
+    for line in str(text or "").splitlines():
+        line_n = normalize_text_for_diff(line)
+        if not line_n:
+            continue
+        if any(re.search(pattern, line_n, re.IGNORECASE) for pattern in PROMO_REVIEW_PATTERNS):
+            stripped = True
+            continue
+        kept_lines.append(line_n)
+
+    if kept_lines:
+        return "\n".join(kept_lines).strip(), stripped
+
+    if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in PROMO_REVIEW_PATTERNS):
+        for pattern in PROMO_REVIEW_PATTERNS:
+            match = re.search(pattern, normalized, re.IGNORECASE)
+            if not match:
+                continue
+            prefix = normalized[: match.start()].rstrip(" ,")
+            if prefix and len(prefix) >= 20:
+                return prefix, True
+        return "", True
+    return normalized, stripped
+
+
+def _remove_promo_review_lines(text: str, question: str = "") -> str:
+    return _strip_promo_review_blocks(text, question=question)[0]
+
+
+def _strip_trailing_broken_sentence(text: str) -> str:
+    normalized = _normalize_multiline_text(text)
+    if not normalized or not _looks_truncated(normalized):
+        return normalized
+
+    sentence_breaks = [normalized.rfind(marker) for marker in (". ", "다. ", "요. ", "니다. ", "! ", "? ")]
+    last_break = max(sentence_breaks)
+    if last_break >= 0:
+        trimmed = normalized[: last_break + 1].rstrip()
+        if trimmed and not _looks_truncated(trimmed):
+            return trimmed
+    return normalized
+
+
+def _clean_answer_candidate_details(text: str, question: str = "") -> dict[str, Any]:
+    raw_answer = _normalize_multiline_text(text)
+    if not raw_answer:
+        return {
+            "raw_answer": "",
+            "cleaned_answer": "",
+            "question_repetition_detected": False,
+            "truncated_detected": False,
+            "cta_stripped": False,
+            "promo_stripped": False,
+        }
+
+    cleaned = raw_answer
+    for marker in FOLLOW_UP_SPLIT_MARKERS:
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, 1)[0].strip()
+
+    prefix_trimmed = True
+    while prefix_trimmed:
+        prefix_trimmed = False
+        for pattern in META_PREFIX_PATTERNS:
+            updated = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+            if updated != cleaned:
+                cleaned = updated.strip()
+                prefix_trimmed = True
+
+    cleaned = re.sub(r"\b(?:좋아요|싫어요|싫어함|like|dislike|thumbs up|thumbs down)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:오전|오후)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned)
+    cleaned = re.sub(r"(?:AM|PM)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[0-9]{1,2}:[0-9]{2}(?:\s?[AP]M)?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r",?\s*[0-9]{4}년\s*[0-9]{1,2}월\s*[0-9]{1,2}일\s*에\s*(?:수신됨|전송됨)", " ", cleaned)
+    cleaned = _trim_product_card_tail(cleaned)
+    had_followup_marker = any(marker in raw_answer for marker in FOLLOW_UP_SPLIT_MARKERS) or any(
+        re.search(pattern, raw_answer, re.IGNORECASE) for pattern in FOLLOWUP_CTA_PATTERNS
+    )
+
+    question_repetition_detected = _is_question_repetition(question, cleaned)
+    cta_stripped = False
+    promo_stripped = False
+    if question_repetition_detected:
+        cleaned = ""
+    else:
+        cleaned, cta_stripped = _strip_followup_cta(cleaned)
+        cleaned, promo_stripped = _strip_promo_review_blocks(cleaned, question=question)
+        cleaned = _strip_trailing_broken_sentence(cleaned)
+        cleaned = " ".join(cleaned.split()).strip()
+        cta_stripped = cta_stripped or had_followup_marker
+
+    truncated_detected = bool(cleaned) and _looks_truncated(cleaned)
+    if truncated_detected:
+        cleaned = ""
+    elif cleaned and len(cleaned) < MIN_CLEAN_ANSWER_LEN:
+        cleaned = ""
+
+    return {
+        "raw_answer": raw_answer,
+        "cleaned_answer": cleaned,
+        "question_repetition_detected": question_repetition_detected,
+        "truncated_detected": truncated_detected,
+        "cta_stripped": cta_stripped,
+        "promo_stripped": promo_stripped,
+    }
 
 
 def _static_ui_normalized() -> set[str]:
@@ -162,32 +448,8 @@ def _trim_product_card_tail(text: str) -> str:
     return normalized
 
 
-def _strip_meta_text(text: str) -> str:
-    normalized = normalize_text_for_diff(text)
-    if not normalized:
-        return ""
-
-    for marker in FOLLOW_UP_SPLIT_MARKERS:
-        if marker in normalized:
-            normalized = normalized.split(marker, 1)[0].strip()
-
-    cleaned = normalized
-    prefix_trimmed = True
-    while prefix_trimmed:
-        prefix_trimmed = False
-        for pattern in META_PREFIX_PATTERNS:
-            updated = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
-            if updated != cleaned:
-                cleaned = updated.strip()
-                prefix_trimmed = True
-
-    cleaned = re.sub(r"\b(?:좋아요|싫어요|싫어함|like|dislike|thumbs up|thumbs down)\b", " ", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"(?:오전|오후)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned)
-    cleaned = re.sub(r"(?:AM|PM)\s*[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?", " ", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[0-9]{1,2}:[0-9]{2}(?:\s?[AP]M)?", " ", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r",?\s*[0-9]{4}년\s*[0-9]{1,2}월\s*[0-9]{1,2}일\s*에\s*(?:수신됨|전송됨)", " ", cleaned)
-    cleaned = _trim_product_card_tail(cleaned)
-    return " ".join(cleaned.split())
+def _strip_meta_text(text: str, question: str = "") -> str:
+    return _clean_answer_candidate_details(text, question=question)["cleaned_answer"]
 
 
 def is_static_ui_text(text: str) -> bool:
@@ -281,16 +543,15 @@ def _merge_answer_candidates(*candidate_groups: list[str]) -> list[str]:
 
 
 def _remove_question_echo_segments(segments: list[str], question: str = "") -> list[str]:
-    question_norm = _strip_meta_text(question).lower()
-    if not question_norm:
+    if not _strip_meta_text(question):
         return segments
 
     filtered: list[str] = []
     for segment in segments:
-        normalized = _strip_meta_text(segment).lower()
+        normalized = _strip_meta_text(segment)
         if not normalized:
             continue
-        if normalized == question_norm:
+        if _is_question_repetition(question, normalized):
             continue
         filtered.append(segment)
     return filtered
@@ -492,17 +753,25 @@ def compute_new_text_segments(before: str | list[str], after: str | list[str]) -
     return result
 
 
-def choose_best_answer_segment(segments: list[str]) -> str:
+def choose_best_answer_segment(segments: list[str], question: str = "") -> str:
+    return choose_best_answer_candidate(segments, question=question)["cleaned_answer"]
+
+
+def choose_best_answer_candidate(segments: list[str], question: str = "") -> dict[str, Any]:
     filtered = filter_out_static_ui_text(segments)
     if not filtered:
-        return ""
-    best_text = ""
+        return _clean_answer_candidate_details("", question=question)
+    best_candidate = _clean_answer_candidate_details("", question=question)
     best_score = -10**9
     for index, segment in enumerate(filtered):
-        normalized = _strip_meta_text(segment)
-        if not normalized:
+        details = _clean_answer_candidate_details(segment, question=question)
+        normalized = details["cleaned_answer"]
+        raw_answer = details["raw_answer"]
+        if not raw_answer:
             continue
-        if looks_like_chat_history_dump(normalized):
+        if looks_like_chat_history_dump(raw_answer) or looks_like_chat_history_dump(normalized):
+            continue
+        if details["question_repetition_detected"] or not normalized:
             continue
         sentence_like_count = sum(normalized.count(marker) for marker in (". ", "다. ", "요. ", "니다. "))
         score = len(normalized) + (index * 2)
@@ -516,18 +785,20 @@ def choose_best_answer_segment(segments: list[str]) -> str:
             score += 10
         if normalized.endswith((".", "다", "요", "니다")):
             score += 4
-        if _looks_like_product_card(normalized):
+        if _looks_like_product_card(raw_answer):
             score -= 80
-        if _looks_like_product_title(normalized):
+        if _looks_like_product_title(raw_answer):
             score -= 70
         if normalized.endswith("?"):
             score -= 30
         if len(normalized) <= 40 and normalized.endswith("?"):
             score -= 20
+        if details["truncated_detected"]:
+            score -= 25
         if score >= best_score:
             best_score = score
-            best_text = _normalize_multiline_text(normalized)
-    return best_text
+            best_candidate = details
+    return best_candidate
 
 
 def _flatten_scope_text(scope_result: Any) -> str:
@@ -573,6 +844,13 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
     )
     diff_segments = diff_visible_text_against_baseline(chat_context)
 
+    cleaned_candidates = [
+        _clean_answer_candidate_details(segment, question=question)
+        for segment in new_bot_by_count + new_bot_segments + new_history_segments + diff_segments
+    ]
+    question_repetition_detected = any(item["question_repetition_detected"] for item in cleaned_candidates)
+    truncated_detected = any(item["truncated_detected"] for item in cleaned_candidates)
+
     strict_candidates = _ordered_unique_segments(
         _remove_question_echo_segments(
             filter_out_static_ui_text(new_bot_by_count + new_bot_segments),
@@ -588,12 +866,18 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
 
     all_candidates = _merge_answer_candidates(strict_candidates, fallback_candidates)
 
-    answer = ""
+    selected_candidate = _clean_answer_candidate_details("", question=question)
     if all_candidates:
-        answer = choose_best_answer_segment(all_candidates)
+        selected_candidate = choose_best_answer_candidate(all_candidates, question=question)
 
     return {
-        "answer": answer,
+        "answer": selected_candidate["cleaned_answer"],
+        "raw_answer": selected_candidate["raw_answer"],
+        "cleaned_answer": selected_candidate["cleaned_answer"],
+        "question_repetition_detected": question_repetition_detected,
+        "truncated_detected": truncated_detected or selected_candidate["truncated_detected"],
+        "cta_stripped": selected_candidate["cta_stripped"],
+        "promo_stripped": selected_candidate["promo_stripped"],
         "history": structured_history.get("history", []),
         "structured_message_history_count": structured_history.get("count", 0),
         "fallback_diff_used": structured_history.get("fallback_diff_used", False) or bool(diff_segments),
@@ -713,8 +997,14 @@ def extract_dom_payload(chat_context: ResolvedChatContext, fragment_path: Path |
     candidate_data = build_post_baseline_answer_candidates(chat_context, question=question)
     html_fragment_path = save_html_fragment(chat_context, fragment_path)
     return {
-        "success": bool(candidate_data["answer"]),
-        "answer": candidate_data["answer"],
+        "success": bool(candidate_data["cleaned_answer"]),
+        "answer": candidate_data["cleaned_answer"],
+        "raw_answer": candidate_data["raw_answer"],
+        "cleaned_answer": candidate_data["cleaned_answer"],
+        "question_repetition_detected": candidate_data["question_repetition_detected"],
+        "truncated_detected": candidate_data["truncated_detected"],
+        "cta_stripped": candidate_data["cta_stripped"],
+        "promo_stripped": candidate_data["promo_stripped"],
         "history": candidate_data["history"],
         "structured_message_history_count": candidate_data["structured_message_history_count"],
         "fallback_diff_used": candidate_data["fallback_diff_used"],

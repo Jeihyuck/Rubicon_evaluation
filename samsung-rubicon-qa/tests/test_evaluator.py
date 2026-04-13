@@ -2,48 +2,67 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from app.evaluator import (
     EVALUATION_SCHEMA,
-    _capture_not_verified_evaluation,
+    _apply_quality_guardrails,
     _coerce_eval_payload,
-    _response_text,
+    build_input_not_verified_evaluation,
+    detect_evaluation_language,
     evaluate_pair,
     fallback_evaluation,
 )
 from app.models import EvalResult, ExtractedPair, TestCase
 
 
-def _make_test_case() -> TestCase:
+def _make_test_case(
+    *,
+    question: str = "배터리 교체는 어디서 하나요?",
+    locale: str = "ko-KR",
+    expected_keywords: list[str] | None = None,
+) -> TestCase:
     return TestCase(
         id="c01",
         category="service",
-        locale="ko-KR",
+        locale=locale,
         page_url="https://www.samsung.com/sec/",
-        question="배터리 교체는 어디서?",
-        expected_keywords=["서비스센터", "배터리"],
+        question=question,
+        expected_keywords=expected_keywords or ["배터리", "서비스센터"],
         forbidden_keywords=["로그인"],
     )
 
 
-def _make_pair(answer: str = "서비스센터에서 가능합니다.") -> ExtractedPair:
+def _make_pair(
+    *,
+    question: str | None = None,
+    answer: str = "서비스센터에서 가능합니다.",
+    locale: str = "ko-KR",
+    extraction_confidence: float = 1.0,
+    extraction_source: str = "dom",
+) -> ExtractedPair:
+    actual_question = question or "배터리 교체는 어디서 하나요?"
     return ExtractedPair(
         run_timestamp="2026-01-01T00:00:00+00:00",
         case_id="c01",
         category="service",
         page_url="https://www.samsung.com/sec/",
-        locale="ko-KR",
-        question="배터리 교체는 어디서?",
+        locale=locale,
+        question=actual_question,
         answer=answer,
-        extraction_source="dom",
-        extraction_confidence=1.0,
+        extraction_source=extraction_source,
+        extraction_confidence=extraction_confidence,
         response_ms=1000,
         status="success",
+        raw_answer=answer,
+        cleaned_answer=answer,
         answer_raw=answer,
         answer_normalized=answer,
+        actual_answer=answer,
+        actual_answer_clean=answer,
         input_dom_verified=True,
         submit_effect_verified=True,
         input_verified=True,
@@ -53,9 +72,28 @@ def _make_pair(answer: str = "서비스센터에서 가능합니다.") -> Extrac
     )
 
 
+def _make_eval_result(language: str = "ko") -> EvalResult:
+    return EvalResult(
+        overall_score=7.8,
+        score_scale="0-10",
+        evaluation_language=language,
+        correctness_score=3.0,
+        relevance_score=1.7,
+        completeness_score=1.6,
+        clarity_score=0.8,
+        groundedness_score=0.7,
+        score_breakdown_explanation="세부 점수 설명" if language == "ko" else "Score breakdown explanation",
+        keyword_alignment_score=7.8,
+        hallucination_risk="low",
+        needs_human_review=False,
+        reason="평가 사유" if language == "ko" else "Evaluation reason",
+        fix_suggestion="개선 제안" if language == "ko" else "Fix suggestion",
+        flags=[],
+    )
+
+
 def _make_config(api_key: str = "test-key"):
     from app.config import AppConfig
-    from pathlib import Path
 
     return AppConfig(
         project_root=Path("/tmp/test"),
@@ -82,292 +120,261 @@ def _make_config(api_key: str = "test-key"):
     )
 
 
-class TestFallbackEvaluation:
-    def test_returns_eval_result(self):
-        result = fallback_evaluation()
-        assert isinstance(result, EvalResult)
-
-    def test_scores_are_zero(self):
-        result = fallback_evaluation()
-        assert result.overall_score == 0.0
-        assert result.relevance_score == 0.0
-        assert result.clarity_score == 0.0
-        assert result.completeness_score == 0.0
-        assert result.keyword_alignment_score == 0.0
-
-    def test_hallucination_risk_is_high(self):
-        result = fallback_evaluation()
-        assert result.hallucination_risk == "high"
-
-    def test_needs_human_review(self):
-        result = fallback_evaluation()
-        assert result.needs_human_review is True
+def test_detect_evaluation_language_ko_from_question():
+    assert detect_evaluation_language("갤럭시 링 배터리 알려줘", "") == "ko"
 
 
-class TestCaptureNotVerifiedEvaluation:
-    def test_matches_mandated_reason(self):
-        result = _capture_not_verified_evaluation()
-        assert result.overall_score == 0.0
-        assert result.needs_human_review is True
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
+def test_detect_evaluation_language_en_from_locale():
+    assert detect_evaluation_language("Tell me about Galaxy Ring battery life", "en-US") == "en"
 
 
-class TestCoerceEvalPayload:
-    def test_valid_payload(self):
-        payload = {
-            "overall_score": 0.85,
-            "relevance_score": 0.9,
-            "clarity_score": 0.8,
-            "completeness_score": 0.85,
-            "keyword_alignment_score": 0.9,
-            "hallucination_risk": "low",
-            "needs_human_review": False,
-            "reason": "Good answer",
-            "fix_suggestion": "None needed",
-        }
-        result = _coerce_eval_payload(payload)
-        assert result.overall_score == 0.85
-        assert result.hallucination_risk == "low"
-        assert result.needs_human_review is False
-        assert result.reason == "Good answer"
-
-    def test_partial_payload_uses_fallback_defaults(self):
-        payload = {"overall_score": 0.5}
-        result = _coerce_eval_payload(payload)
-        assert result.overall_score == 0.5
-        assert result.hallucination_risk == "high"
-
-    def test_numeric_coercion(self):
-        payload = {
-            "overall_score": "0.75",
-            "relevance_score": "0.8",
-            "clarity_score": "0.7",
-            "completeness_score": "0.8",
-            "keyword_alignment_score": "0.9",
-            "hallucination_risk": "medium",
-            "needs_human_review": False,
-            "reason": "ok",
-            "fix_suggestion": "",
-        }
-        result = _coerce_eval_payload(payload)
-        assert result.overall_score == 0.75
-        assert result.clarity_score == 0.7
+def test_fallback_evaluation_uses_fixed_scale():
+    result = fallback_evaluation("ko")
+    assert result.score_scale == "0-10"
+    assert result.evaluation_language == "ko"
+    assert result.overall_score == 0.0
+    assert result.correctness_score == 0.0
+    assert result.groundedness_score == 0.0
 
 
-class TestResponseText:
-    def test_output_text_attribute(self):
-        mock_response = MagicMock()
-        mock_response.output_text = "hello"
-        assert _response_text(mock_response) == "hello"
-
-    def test_model_dump_fallback(self):
-        mock_response = MagicMock()
-        mock_response.output_text = ""
-        mock_response.model_dump.return_value = {
-            "output": [
-                {
-                    "content": [
-                        {"text": '{"overall_score": 0.9}'},
-                    ]
-                }
-            ]
-        }
-        text = _response_text(mock_response)
-        assert "overall_score" in text
-
-    def test_empty_when_no_output(self):
-        mock_response = MagicMock()
-        mock_response.output_text = ""
-        mock_response.model_dump.return_value = {"output": []}
-        text = _response_text(mock_response)
-        assert text == ""
+def test_build_input_not_verified_evaluation_is_localized():
+    result = build_input_not_verified_evaluation("갤럭시 링 배터리", "ko-KR")
+    assert result.evaluation_language == "ko"
+    assert result.score_scale == "0-10"
+    assert result.flags == ["input_not_verified"]
+    assert "질문" in result.reason or "입력" in result.reason
 
 
-class TestEvaluatePair:
-    def test_evaluation_uses_actual_answer_clean_first(self):
-        import json
-        from dataclasses import replace
-
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        pair = replace(
-            _make_pair(answer="가까운 서비스센터에서 바로 가능한가요?"),
-            actual_answer="서비스센터 방문으로 교체 가능합니다.",
-            actual_answer_clean="정제된 본문 답변",
-        )
-
-        response = MagicMock()
-        response.output_text = json.dumps(
-            {
-                "overall_score": 0.9,
-                "relevance_score": 0.9,
-                "clarity_score": 0.9,
-                "completeness_score": 0.9,
-                "keyword_alignment_score": 0.9,
-                "hallucination_risk": "low",
-                "needs_human_review": False,
-                "reason": "ok",
-                "fix_suggestion": "",
-            },
-            ensure_ascii=False,
-        )
-
-        with patch("app.evaluator.OpenAI") as mock_openai:
-            mock_openai.return_value.responses.create.return_value = response
-            evaluate_pair(config, _make_test_case(), pair, logger)
-
-        kwargs = mock_openai.return_value.responses.create.call_args.kwargs
-        user_payload = json.loads(kwargs["input"][1]["content"][0]["text"])
-        assert user_payload["answer"] == "정제된 본문 답변"
-
-    def test_fallback_when_no_api_key(self):
-        config = _make_config(api_key="")
-        logger = MagicMock()
-        result = evaluate_pair(config, _make_test_case(), _make_pair(), logger)
-        assert result.overall_score == 0.0
-        assert result.needs_human_review is True
-
-    def test_fallback_when_input_not_verified(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        unverified_pair = _make_pair()
-        # Override to unverified
-        from dataclasses import replace
-        unverified_pair = replace(unverified_pair, input_verified=False)
-        result = evaluate_pair(config, _make_test_case(), unverified_pair, logger)
-        assert result.overall_score == 0.0
-        assert result.needs_human_review is True
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
-
-    def test_fallback_when_invalid_capture(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        from dataclasses import replace
-        invalid_pair = replace(_make_pair(), status="invalid_capture", input_verified=False)
-        result = evaluate_pair(config, _make_test_case(), invalid_pair, logger)
-        assert result.overall_score == 0.0
-        assert result.needs_human_review is True
-        assert result.reason == "Invalid capture: capture_not_verified"
-
-    def test_fallback_when_new_response_not_detected(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        from dataclasses import replace
-
-        pair = replace(_make_pair(), new_bot_response_detected=False)
-        result = evaluate_pair(config, _make_test_case(), pair, logger)
-        assert result.overall_score == 0.0
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
-
-    def test_fallback_when_baseline_menu_detected(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        from dataclasses import replace
-
-        pair = replace(_make_pair(), baseline_menu_detected=True)
-        result = evaluate_pair(config, _make_test_case(), pair, logger)
-        assert result.overall_score == 0.0
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
-
-    def test_fallback_when_submit_effect_not_verified(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        from dataclasses import replace
-
-        pair = replace(_make_pair(), submit_effect_verified=False, input_verified=False)
-        result = evaluate_pair(config, _make_test_case(), pair, logger)
-        assert result.overall_score == 0.0
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
-
-    def test_fallback_when_answer_empty(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        pair = _make_pair(answer="")
-        result = evaluate_pair(config, _make_test_case(), pair, logger)
-        assert result.overall_score == 0.0
-        assert result.reason == "Capture invalid: no verified submitted question and bot answer pair"
-
-    def test_evaluation_proceeds_when_echo_unverified_but_input_verified(self):
-        """Echo check failure alone must not block evaluation."""
-        import json
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        from dataclasses import replace
-        # input verified, echo NOT verified — evaluation should still run
-        pair_no_echo = replace(_make_pair(), user_message_echo_verified=False)
-        payload = {
-            "overall_score": 0.8,
-            "relevance_score": 0.8,
-            "clarity_score": 0.8,
-            "completeness_score": 0.8,
-            "keyword_alignment_score": 0.8,
-            "hallucination_risk": "low",
-            "needs_human_review": False,
-            "reason": "ok",
-            "fix_suggestion": "",
-        }
-        mock_response = MagicMock()
-        mock_response.output_text = json.dumps(payload)
-        with patch("app.evaluator.OpenAI") as mock_openai_cls:
-            mock_client = MagicMock()
-            mock_openai_cls.return_value = mock_client
-            mock_client.responses.create.return_value = mock_response
-            result = evaluate_pair(config, _make_test_case(), pair_no_echo, logger)
-        assert result.overall_score == 0.8
-
-    def test_openai_success(self):
-        import json
-
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-        payload = {
-            "overall_score": 0.9,
-            "relevance_score": 0.95,
-            "clarity_score": 0.85,
-            "completeness_score": 0.9,
-            "keyword_alignment_score": 0.85,
-            "hallucination_risk": "low",
-            "needs_human_review": False,
-            "reason": "Answer directly addresses the question.",
-            "fix_suggestion": "",
-        }
-
-        mock_response = MagicMock()
-        mock_response.output_text = json.dumps(payload)
-
-        with patch("app.evaluator.OpenAI") as mock_openai_cls:
-            mock_client = MagicMock()
-            mock_openai_cls.return_value = mock_client
-            mock_client.responses.create.return_value = mock_response
-
-            result = evaluate_pair(config, _make_test_case(), _make_pair(), logger)
-
-        assert result.overall_score == 0.9
-        assert result.hallucination_risk == "low"
-        assert result.needs_human_review is False
-
-    def test_openai_exception_returns_fallback(self):
-        config = _make_config(api_key="sk-test")
-        logger = MagicMock()
-
-        with patch("app.evaluator.OpenAI") as mock_openai_cls:
-            mock_client = MagicMock()
-            mock_openai_cls.return_value = mock_client
-            mock_client.responses.create.side_effect = RuntimeError("API error")
-
-            result = evaluate_pair(config, _make_test_case(), _make_pair(), logger)
-
-        assert result.overall_score == 0.0
-        assert result.needs_human_review is True
+def test_schema_requires_new_breakdown_fields():
+    required = EVALUATION_SCHEMA["required"]
+    assert "score_scale" in required
+    assert "evaluation_language" in required
+    assert "correctness_score" in required
+    assert "groundedness_score" in required
+    assert "score_breakdown_explanation" in required
 
 
-class TestEvaluationSchema:
-    def test_schema_has_required_fields(self):
-        required = EVALUATION_SCHEMA["required"]
-        assert "overall_score" in required
-        assert "hallucination_risk" in required
-        assert "needs_human_review" in required
-        assert "reason" in required
+def test_coerce_payload_recomputes_overall_from_components():
+    payload = {
+        "score_scale": "0-10",
+        "evaluation_language": "en",
+        "overall_score": 1.0,
+        "correctness_score": 3.0,
+        "relevance_score": 1.5,
+        "completeness_score": 1.5,
+        "clarity_score": 0.7,
+        "groundedness_score": 0.8,
+        "score_breakdown_explanation": "English explanation",
+        "keyword_alignment_score": 5.0,
+        "hallucination_risk": "low",
+        "needs_human_review": False,
+        "reason": "English reason",
+        "fix_suggestion": "English fix",
+        "flags": [],
+    }
+    result = _coerce_eval_payload(payload, "en")
+    assert result.overall_score == 7.5
+    assert result.score_scale == "0-10"
+    assert result.evaluation_language == "en"
 
-    def test_schema_disallows_additional_properties(self):
-        assert EVALUATION_SCHEMA.get("additionalProperties") is False
+
+def test_question_repetition_gets_hard_cap():
+    question = "갤럭시 S26 울트라 사양 알려주세요"
+    pair = _make_pair(question=question, answer=question)
+    test_case = _make_test_case(question=question, expected_keywords=["디스플레이", "카메라"])
+    result = _apply_quality_guardrails(test_case, pair, _make_eval_result("ko"))
+    assert "question_repetition" in result.flags
+    assert result.overall_score <= 1.0
+    assert result.reason.startswith("답변이 질문을 반복해 실제 정보를 제공하지 않으므로 품질이 매우 낮습니다.")
+
+
+def test_off_topic_carryover_gets_severe_penalty():
+    test_case = _make_test_case(question="세탁기 용량 알려줘", expected_keywords=["세탁기"])
+    pair = _make_pair(question="세탁기 용량 알려줘", answer="갤럭시 S26 울트라 카메라와 화면 차이를 안내드릴게요")
+    result = _apply_quality_guardrails(test_case, pair, _make_eval_result("ko"))
+    assert "off_topic_or_carryover" in result.flags
+    assert result.overall_score <= 1.5
+    assert result.needs_human_review is True
+
+
+def test_related_answer_with_promo_noise_is_not_marked_off_topic():
+    question = "갤럭시 버즈3 프로 ANC와 방수 등 핵심 기능 알려줘"
+    answer = (
+        "갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원하고, 2-way 스피커가 핵심입니다. "
+        "리뷰에서는 착용감이 좋다는 반응도 있습니다."
+    )
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["버즈", "ANC", "IP57"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+    assert "off_topic_or_carryover" not in result.flags
+    assert "promo_or_product_card_leak" in result.flags
+
+
+def test_s26_released_name_alone_does_not_trigger_speculative_flag():
+    question = "S26 Ultra 스펙 질문"
+    answer = "출시 제품 기준 스펙 요약"
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["스펙"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+    assert "speculative_unverified" not in result.flags
+
+
+def test_evaluation_prefers_cleaned_answer_over_raw_noise():
+    question = "갤럭시 버즈3 프로 ANC와 방수 알려줘"
+    pair = _make_pair(
+        question=question,
+        answer="추천 질문 관련 질문 CS AI 챗봇에 문의",
+    )
+    pair = replace(
+        pair,
+        raw_answer="추천 질문 관련 질문 CS AI 챗봇에 문의",
+        cleaned_answer="갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다.",
+        actual_answer_clean="갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다.",
+    )
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["ANC", "IP57"]),
+        pair,
+        _make_eval_result("ko"),
+    )
+    assert "off_topic_or_carryover" not in result.flags
+    assert result.overall_score >= 7.0
+
+
+def test_speculative_unverified_lowers_groundedness():
+    question = "갤럭시 S26 울트라와 플러스 차이를 알려줘"
+    answer = "S26 울트라는 200MP 카메라와 5000mAh 배터리, 6.9형 디스플레이를 제공합니다."
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["카메라"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+    assert "speculative_unverified" in result.flags
+    assert result.groundedness_score <= 0.3
+    assert result.hallucination_risk == "high"
+
+
+def test_truncated_and_promo_leak_flags_detected():
+    question = "오디세이 OLED G8 비교"
+    answer = "오디세이 OLED G8은 32형 240Hz입니다. 현재 판매가 1,299,000원:"
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["오디세이"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+    assert "truncated_answer" in result.flags
+    assert "promo_or_product_card_leak" in result.flags
+
+
+def test_korean_question_forces_korean_evaluation_text():
+    config = _make_config("sk-test")
+    logger = MagicMock()
+    test_case = _make_test_case(question="갤럭시 링 배터리 알려줘", locale="ko-KR", expected_keywords=["배터리"])
+    pair = _make_pair(question=test_case.question, answer="갤럭시 링은 최대 7일 사용 가능합니다.")
+    payload = {
+        "score_scale": "0-10",
+        "evaluation_language": "en",
+        "overall_score": 5.0,
+        "correctness_score": 3.0,
+        "relevance_score": 1.5,
+        "completeness_score": 1.0,
+        "clarity_score": 0.5,
+        "groundedness_score": 0.5,
+        "score_breakdown_explanation": "The score is based on correctness and relevance.",
+        "keyword_alignment_score": 5.0,
+        "hallucination_risk": "medium",
+        "needs_human_review": False,
+        "reason": "The answer directly addresses the question.",
+        "fix_suggestion": "Add one more detail.",
+        "flags": [],
+    }
+    response = MagicMock()
+    response.output_text = json.dumps(payload, ensure_ascii=False)
+
+    with patch("app.evaluator.OpenAI") as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.responses.create.return_value = response
+        result = evaluate_pair(config, test_case, pair, logger)
+
+    assert result.evaluation_language == "ko"
+    assert any("가" <= ch <= "힣" for ch in result.reason)
+    assert any("가" <= ch <= "힣" for ch in result.fix_suggestion)
+    assert any("가" <= ch <= "힣" for ch in result.score_breakdown_explanation)
+
+
+def test_english_question_forces_english_evaluation_text():
+    config = _make_config("sk-test")
+    logger = MagicMock()
+    test_case = _make_test_case(
+        question="Explain the Galaxy Ring battery life and health sensors.",
+        locale="en-US",
+        expected_keywords=["battery", "sensor"],
+    )
+    pair = _make_pair(
+        question=test_case.question,
+        locale="en-US",
+        answer="Galaxy Ring offers up to 7 days of battery life with heart rate and skin temperature sensors.",
+    )
+    payload = {
+        "score_scale": "0-10",
+        "evaluation_language": "ko",
+        "overall_score": 5.0,
+        "correctness_score": 3.0,
+        "relevance_score": 1.5,
+        "completeness_score": 1.0,
+        "clarity_score": 0.5,
+        "groundedness_score": 0.5,
+        "score_breakdown_explanation": "세부 점수 설명입니다.",
+        "keyword_alignment_score": 5.0,
+        "hallucination_risk": "medium",
+        "needs_human_review": False,
+        "reason": "답변이 질문에 대체로 맞습니다.",
+        "fix_suggestion": "세부 수치를 더 보강하세요.",
+        "flags": [],
+    }
+    response = MagicMock()
+    response.output_text = json.dumps(payload, ensure_ascii=False)
+
+    with patch("app.evaluator.OpenAI") as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.responses.create.return_value = response
+        result = evaluate_pair(config, test_case, pair, logger)
+
+    assert result.evaluation_language == "en"
+    assert not any("가" <= ch <= "힣" for ch in result.reason)
+    assert not any("가" <= ch <= "힣" for ch in result.fix_suggestion)
+    assert not any("가" <= ch <= "힣" for ch in result.score_breakdown_explanation)
+
+
+def test_input_not_verified_fallback_is_localized_for_english():
+    result = build_input_not_verified_evaluation("Explain Galaxy Ring battery life", "en-US")
+    assert result.evaluation_language == "en"
+    assert "question" in result.reason.lower() or "input" in result.reason.lower()
+    assert not any("가" <= ch <= "힣" for ch in result.fix_suggestion)
+
+
+def test_low_score_reason_starts_negative_sentence():
+    result = _apply_quality_guardrails(
+        _make_test_case(question="세탁기 용량 알려줘", expected_keywords=["세탁기"]),
+        _make_pair(question="세탁기 용량 알려줘", answer="갤럭시 S26 울트라 카메라와 화면 차이를 안내드릴게요"),
+        _make_eval_result("ko"),
+    )
+    assert result.overall_score <= 2.0
+    assert result.reason.startswith("답변 주제가 현재 질문과 어긋나 품질이 매우 낮습니다.")
+
+
+def test_high_score_reason_starts_positive_sentence():
+    question = "갤럭시 링 배터리와 센서 알려줘"
+    answer = "갤럭시 링은 최대 7일 사용 가능하며 심박수와 피부 온도 같은 건강 센서를 제공합니다."
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["배터리", "센서"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+    assert result.overall_score >= 7.0
+    assert result.reason.startswith("답변이 질문 의도에 전반적으로 잘 맞고 핵심 정보를 충분히 제공합니다.")

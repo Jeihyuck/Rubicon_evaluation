@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from app.dom_extractor import (
+    _clean_answer_candidate_details,
+    _looks_truncated,
+    _strip_followup_cta,
     _strip_meta_text,
+    _strip_promo_review_blocks,
     build_post_baseline_answer_candidates,
     choose_best_answer_segment,
     compute_new_text_segments,
@@ -66,6 +70,32 @@ class TestStaticUiFiltering:
             "갤럭시 S24 자급제 (SM-S921N) ⭐ 4.8 1,155,000원 44,000원 할인 더 알아보기"
         )
         assert _strip_meta_text(text) == "갤럭시 S24는 6.2형 디스플레이와 4,000mAh 배터리를 제공합니다."
+
+    def test_strip_followup_cta_removes_followup_block(self):
+        text = "배터리 5000mAh입니다. 더 알아보기\n추천 질문: 카메라는 어떤가요?\nCS AI 챗봇에 문의해 주세요."
+        cleaned, stripped = _strip_followup_cta(text)
+        assert cleaned == "배터리 5000mAh입니다."
+        assert stripped is True
+
+    def test_strip_promo_review_blocks_removes_review_and_benefit(self):
+        text = "무게는 1.69kg입니다.\n리뷰 한줄 요약: 휴대성이 좋습니다.\n구매 혜택: 할인 7%"
+        cleaned, stripped = _strip_promo_review_blocks(text, question="갤럭시 북5 프로 360 무게 알려줘")
+        assert cleaned == "무게는 1.69kg입니다."
+        assert stripped is True
+
+    def test_clean_answer_candidate_details_reports_cleaning_flags(self):
+        text = "배터리 5000mAh입니다. 더 알아보기\n추천 질문: 카메라는 어떤가요?\nCS AI 챗봇에 문의해 주세요."
+        details = _clean_answer_candidate_details(text, question="배터리 알려줘")
+        assert details["cleaned_answer"] == "배터리 5000mAh입니다."
+        assert details["cta_stripped"] is True
+
+    def test_clean_answer_candidate_details_detects_truncated_answer(self):
+        details = _clean_answer_candidate_details("운동용으로도 매칭이 .", question="버즈3 프로 방수 알려줘")
+        assert details["truncated_detected"] is True
+        assert details["cleaned_answer"] == ""
+
+    def test_looks_truncated_matches_requested_pattern(self):
+        assert _looks_truncated("운동용으로도 매칭이 .") is True
 
     def test_chat_history_dump_is_detected(self):
         text = (
@@ -157,6 +187,25 @@ class TestDiffHelpers:
             "갤럭시 버즈3 프로는 배터리가 케이스 포함 최대 26시간 노캔 켜짐 기준, "
             "방수는 IP57, 오디오는 2-way 스피커와 적응형 노이즈 캔슬링이 핵심이에요."
         )
+
+    def test_choose_best_answer_segment_rejects_question_repetition(self):
+        question = "갤럭시 버즈3 프로 방수와 ANC 알려줘"
+        segments = [
+            question,
+            "갤럭시 버즈3 프로는 IP57 방수와 적응형 노이즈 캔슬링을 지원합니다.",
+        ]
+
+        best = choose_best_answer_segment(segments, question=question)
+        assert best == "갤럭시 버즈3 프로는 IP57 방수와 적응형 노이즈 캔슬링을 지원합니다."
+
+    def test_choose_best_answer_segment_removes_promo_review_noise_when_not_asked(self):
+        question = "갤럭시 버즈3 프로 ANC와 방수 알려줘"
+        segments = [
+            "갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다.\n구매 혜택\n할인 쿠폰\n리뷰에서는 착용감이 좋다는 반응이 많습니다.",
+        ]
+
+        best = choose_best_answer_segment(segments, question=question)
+        assert best == "갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다."
 
 
 class TestMessageNodeExtraction:
@@ -379,3 +428,54 @@ class TestPostBaselineCandidates:
         assert payload["fallback_candidates"] == [answer_body, "가까운 서비스센터에서 바로 가능한가요?"]
         assert payload["all_candidates"] == ["가까운 서비스센터에서 바로 가능한가요?", answer_body]
         assert payload["answer"] == answer_body
+
+    def test_post_baseline_candidates_flag_question_repetition_and_reject_echo(self):
+        class DummyContext:
+            baseline_bot_count = 0
+            baseline_bot_messages = []
+            baseline_message_nodes_snapshot = []
+            baseline_visible_blocks = []
+
+        from unittest.mock import patch
+
+        question = "갤럭시 S26 울트라 사양 알려주세요"
+        with (
+            patch(
+                "app.dom_extractor.extract_structured_message_history",
+                return_value={"history": [question], "count": 1, "fallback_diff_used": False},
+            ),
+            patch("app.dom_extractor.extract_bot_message_texts", return_value=[question]),
+            patch("app.dom_extractor.diff_visible_text_against_baseline", return_value=[question]),
+            patch("app.dom_extractor.extract_visible_chat_text", return_value=question),
+            patch("app.dom_extractor.extract_visible_text_blocks", return_value=[question]),
+        ):
+            payload = build_post_baseline_answer_candidates(DummyContext(), question=question)
+
+        assert payload["question_repetition_detected"] is True
+        assert payload["answer"] == ""
+        assert payload["strict_candidates"] == []
+
+    def test_post_baseline_candidates_flag_truncated_cleaned_answer(self):
+        class DummyContext:
+            baseline_bot_count = 0
+            baseline_bot_messages = []
+            baseline_message_nodes_snapshot = []
+            baseline_visible_blocks = []
+
+        from unittest.mock import patch
+
+        answer = "운동용으로도 매칭이 ."
+        with (
+            patch(
+                "app.dom_extractor.extract_structured_message_history",
+                return_value={"history": [answer], "count": 1, "fallback_diff_used": False},
+            ),
+            patch("app.dom_extractor.extract_bot_message_texts", return_value=[answer]),
+            patch("app.dom_extractor.diff_visible_text_against_baseline", return_value=[answer]),
+            patch("app.dom_extractor.extract_visible_chat_text", return_value=answer),
+            patch("app.dom_extractor.extract_visible_text_blocks", return_value=[answer]),
+        ):
+            payload = build_post_baseline_answer_candidates(DummyContext(), question="갤럭시 버즈3 프로 방수 알려줘")
+
+        assert payload["truncated_detected"] is True
+        assert payload["cleaned_answer"] == ""

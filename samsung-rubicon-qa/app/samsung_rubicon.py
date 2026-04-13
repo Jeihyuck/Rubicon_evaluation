@@ -13,6 +13,9 @@ from playwright.sync_api import Frame, Locator, Page
 
 from app.config import AppConfig
 from app.dom_extractor import (
+    _detect_topic_family as _dom_detect_topic_family,
+    _is_question_repetition as _dom_is_question_repetition,
+    _looks_truncated as _dom_looks_truncated,
     build_post_baseline_answer_candidates,
     choose_best_answer_segment,
     compute_new_text_segments,
@@ -322,6 +325,9 @@ class AnswerWaitResult:
     new_bot_response_detected: bool
     baseline_menu_detected: bool
     reason: str
+    question_repetition_detected: bool = False
+    truncated_answer_detected: bool = False
+    needs_retry_extraction: bool = False
 
 
 @dataclass(slots=True)
@@ -2474,6 +2480,56 @@ def _normalize_answer_text(text: str | None) -> str:
     return "\n".join(lines).strip()
 
 
+def _extract_alignment_keywords(text: str) -> list[str]:
+    normalized = _normalize_answer_text(text).lower()
+    if not normalized:
+        return []
+    stopwords = {
+        "알려줘",
+        "알려주세요",
+        "비교",
+        "차이",
+        "설명",
+        "주세요",
+        "what",
+        "which",
+        "tell",
+        "please",
+        "about",
+    }
+    keywords: list[str] = []
+    for token in re.findall(r"[a-z0-9가-힣+]{2,}", normalized):
+        if token in stopwords or token in keywords:
+            continue
+        keywords.append(token)
+    return keywords
+
+
+def _has_minimal_question_alignment(question: str, answer: str) -> bool:
+    normalized_answer = _clean_bot_answer_candidate(answer).lower()
+    if not normalized_answer or _dom_is_question_repetition(question, normalized_answer):
+        return False
+
+    question_family = _dom_detect_topic_family(question)
+    answer_family = _dom_detect_topic_family(normalized_answer)
+    if question_family != "unknown" and answer_family != "unknown" and question_family != answer_family:
+        return False
+
+    keywords = _extract_alignment_keywords(question)[:6]
+    if not keywords:
+        return True
+    hits = sum(1 for keyword in keywords if keyword in normalized_answer)
+    required_hits = 1 if len(keywords) <= 2 else 2
+    return hits >= required_hits
+
+
+def _wait_one_more_extraction_cycle(context: ResolvedChatContext, interval_sec: float) -> None:
+    if hasattr(context.scope, "wait_for_timeout"):
+        context.scope.wait_for_timeout(int(interval_sec * 1000))
+    else:
+        time.sleep(interval_sec)
+
+
 def _strip_answer_meta_prefixes(text: str) -> str:
     cleaned = _normalize_answer_text(text)
     if not cleaned:
@@ -2817,7 +2873,7 @@ def extract_last_answer(context: ResolvedChatContext, question: str = "") -> dic
 
 
 def _select_report_answer(wait_answer: str, dom_answer: str, has_verified_response: bool) -> str:
-    """Prefer the verified wait-result answer over weaker DOM payload text."""
+    """Prefer the verified cleaned answer over weaker DOM payload text."""
 
     wait_clean = _clean_bot_answer_candidate(wait_answer)
     dom_clean = _clean_bot_answer_candidate(dom_answer)
@@ -2829,14 +2885,14 @@ def _select_report_answer(wait_answer: str, dom_answer: str, has_verified_respon
         dom_answer = ""
 
     if has_verified_response and _looks_like_main_answer(wait_clean):
-        return wait_answer
+        return wait_clean
     if _looks_like_main_answer(dom_clean):
-        return dom_answer
+        return dom_clean
     if has_verified_response and wait_clean and not _is_followup_question_chip(wait_clean):
-        return wait_answer
+        return wait_clean
     if dom_clean and not _is_followup_question_chip(dom_clean):
-        return dom_answer
-    return wait_answer
+        return dom_clean
+    return wait_clean
 
 
 def _recover_dom_response_candidate(
@@ -3741,6 +3797,9 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
     baseline_menu_detected = False
     count_increase_observed = False
     text_diff_observed = False
+    question_repetition_detected = False
+    truncated_answer_detected = False
+    truncation_retry_used = False
 
     while time.perf_counter() < deadline:
         candidate_data = build_post_baseline_answer_candidates(context, question=question)
@@ -3751,6 +3810,8 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
         filtered_new_bot_segments = candidate_data.get("strict_candidates", [])
         filtered_diff_segments = candidate_data.get("fallback_candidates", [])
         new_text = candidate_data.get("answer", "")
+        if candidate_data.get("question_repetition_detected"):
+            question_repetition_detected = True
         if count_increased:
             count_increase_observed = True
         if new_text:
@@ -3765,7 +3826,7 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
         if count_increased or new_text:
             strict_candidates = candidate_data.get("strict_candidates", [])
             if strict_candidates:
-                latest_text = choose_best_answer_segment(strict_candidates)
+                latest_text = choose_best_answer_segment(strict_candidates, question=question)
             elif new_text:
                 latest_text = new_text
             elif any(
@@ -3779,7 +3840,39 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
                 runtime.logger.info("[ANSWER] loading-only candidate ignored: %s", latest_text)
                 latest_text = ""
             if latest_text:
+                if _dom_is_question_repetition(question, latest_text):
+                    runtime.logger.info("[ANSWER] question repetition candidate rejected: %s", latest_text)
+                    question_repetition_detected = True
+                    latest_text = ""
+                    stable_checks = 0
+                    previous_text = ""
+                    if hasattr(context.scope, "wait_for_timeout"):
+                        context.scope.wait_for_timeout(int(interval_sec * 1000))
+                    else:
+                        time.sleep(interval_sec)
+                    continue
                 clean_latest_text = _clean_bot_answer_candidate(latest_text)
+                if _dom_looks_truncated(clean_latest_text):
+                    truncated_answer_detected = True
+                    if not truncation_retry_used:
+                        runtime.logger.info("[ANSWER] truncated candidate detected; waiting one extra cycle")
+                        truncation_retry_used = True
+                        stable_checks = 0
+                        previous_text = ""
+                        if hasattr(context.scope, "wait_for_timeout"):
+                            context.scope.wait_for_timeout(int(interval_sec * 1000))
+                        else:
+                            time.sleep(interval_sec)
+                        continue
+                    runtime.logger.info("[ANSWER] truncated candidate persisted after retry; rejecting success adoption")
+                    latest_text = ""
+                    stable_checks = 0
+                    previous_text = ""
+                    if hasattr(context.scope, "wait_for_timeout"):
+                        context.scope.wait_for_timeout(int(interval_sec * 1000))
+                    else:
+                        time.sleep(interval_sec)
+                    continue
                 is_meaningful = len(clean_latest_text) >= MIN_MAIN_ANSWER_LEN and _is_meaningful_answer_text(clean_latest_text)
                 growing = bool(previous_text) and clean_latest_text.startswith(previous_text) and len(clean_latest_text) > len(previous_text)
                 runtime.logger.info("[ANSWER] final answer segment chosen: %s", latest_text)
@@ -3798,6 +3891,9 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
                         new_bot_response_detected=True,
                         baseline_menu_detected=baseline_menu_detected,
                         reason="",
+                        question_repetition_detected=question_repetition_detected,
+                        truncated_answer_detected=False,
+                        needs_retry_extraction=False,
                     )
                 if stable_checks >= stable_target and not _loading_visible(context):
                     response_ms = int((time.perf_counter() - started) * 1000)
@@ -3809,6 +3905,9 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
                         new_bot_response_detected=True,
                         baseline_menu_detected=baseline_menu_detected,
                         reason="",
+                        question_repetition_detected=question_repetition_detected,
+                        truncated_answer_detected=False,
+                        needs_retry_extraction=False,
                     )
 
         if hasattr(context.scope, "wait_for_timeout"):
@@ -3817,7 +3916,11 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
             time.sleep(interval_sec)
 
     runtime.logger.info("[ANSWER] answer stabilized false")
-    if baseline_menu_detected:
+    if truncated_answer_detected:
+        reason = "truncated answer detected after retry"
+    elif question_repetition_detected:
+        reason = "question repetition answer detected"
+    elif baseline_menu_detected:
         reason = "Baseline menu only; no answer generated"
     elif count_increase_observed or text_diff_observed:
         reason = "No new bot response after successful submit"
@@ -3826,9 +3929,12 @@ def wait_for_answer_completion(context: ResolvedChatContext, question: str = "")
     return AnswerWaitResult(
         answer="",
         response_ms=int((time.perf_counter() - started) * 1000),
-        new_bot_response_detected=False,
+        new_bot_response_detected=count_increase_observed or text_diff_observed,
         baseline_menu_detected=baseline_menu_detected,
         reason=reason,
+        question_repetition_detected=question_repetition_detected,
+        truncated_answer_detected=truncated_answer_detected,
+        needs_retry_extraction=question_repetition_detected or truncated_answer_detected,
     )
 
 
@@ -3902,10 +4008,17 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     context: ResolvedChatContext | None = None
     artifacts = BrowserArtifacts()
     answer = ""
+    raw_answer = ""
+    cleaned_answer = ""
     answer_raw = ""
     answer_normalized = ""
     actual_answer = ""
     actual_answer_clean = ""
+    question_repetition_detected = False
+    truncated_answer_detected = False
+    needs_retry_extraction = False
+    cta_stripped = False
+    promo_stripped = False
     extraction_source = "unknown"
     extraction_source_detail = "unknown"
     extraction_confidence = 0.0
@@ -4191,10 +4304,15 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 fix_suggestion = CAPTURE_INVALID_FIX
         else:
             wait_result = wait_for_new_bot_response(context, context.baseline_bot_count, question=test_case.question)
+            question_repetition_detected = wait_result.question_repetition_detected
+            truncated_answer_detected = wait_result.truncated_answer_detected
+            needs_retry_extraction = wait_result.needs_retry_extraction
             wait_clean_details = _clean_bot_answer_candidate_details(wait_result.answer)
             answer_raw = wait_result.answer
+            raw_answer = wait_result.answer
             actual_answer = wait_clean_details["clean"]
             actual_answer_clean = wait_clean_details["clean"]
+            cleaned_answer = actual_answer_clean
             answer_normalized = actual_answer_clean or _normalize_answer_text(wait_result.answer)
             answer = actual_answer_clean or answer_normalized
             extraction_source_detail = "wait_verified" if wait_result.answer else "unknown"
@@ -4220,33 +4338,73 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 )
 
             dom_payload = extract_dom_payload(context, None, question=test_case.question)
+            if dom_payload.get("question_repetition_detected") or dom_payload.get("truncated_detected"):
+                runtime.logger.info("[ANSWER] DOM payload flagged for retry; waiting one more extraction cycle")
+                _wait_one_more_extraction_cycle(context, runtime.config.answer_stable_interval_sec)
+                dom_payload = extract_dom_payload(context, None, question=test_case.question)
+            question_repetition_detected = question_repetition_detected or bool(dom_payload.get("question_repetition_detected", False))
+            truncated_answer_detected = truncated_answer_detected or bool(dom_payload.get("truncated_detected", False))
+            needs_retry_extraction = needs_retry_extraction or question_repetition_detected or truncated_answer_detected
+            cta_stripped = bool(dom_payload.get("cta_stripped", False))
+            promo_stripped = bool(dom_payload.get("promo_stripped", False))
             if _should_dump_dom_payload(case_failed=False, config=runtime.config):
                 _dump_chat_html_fragment(context, test_case.id, runtime.current_case_timestamp)
-            dom_answer = dom_payload.get("answer", "")
+            dom_answer = str(dom_payload.get("cleaned_answer") or "")
+            dom_raw_answer = str(dom_payload.get("raw_answer") or "")
             last_answer_payload = extract_last_answer(context, question=test_case.question)
-            selected_answer_raw = _select_report_answer(
-                answer_raw,
-                last_answer_payload.get("answer_raw") or dom_answer,
+            last_answer_clean = str(last_answer_payload.get("actual_answer_clean") or last_answer_payload.get("actual_answer") or "")
+            selected_answer = _select_report_answer(
+                actual_answer_clean or answer_raw,
+                dom_answer or last_answer_clean,
                 new_bot_response_detected,
             )
-            if dom_answer and selected_answer_raw != dom_answer:
-                runtime.logger.info("[ANSWER] preserving verified wait answer over DOM payload answer")
-            if selected_answer_raw:
-                answer_raw = selected_answer_raw
-                selected_details = _clean_bot_answer_candidate_details(answer_raw)
-                selected_clean = selected_details["clean"]
+            if dom_answer and selected_answer != dom_answer:
+                runtime.logger.info("[ANSWER] preserving verified cleaned wait answer over DOM payload answer")
+            if selected_answer:
+                if selected_answer == dom_answer:
+                    raw_answer = dom_raw_answer or selected_answer
+                    answer_raw = dom_raw_answer or selected_answer
+                    selected_details = _clean_bot_answer_candidate_details(selected_answer)
+                    selected_clean = dom_answer
+                elif selected_answer == last_answer_clean:
+                    raw_answer = str(last_answer_payload.get("answer_raw") or selected_answer)
+                    answer_raw = raw_answer
+                    selected_details = _clean_bot_answer_candidate_details(raw_answer)
+                    selected_clean = last_answer_clean
+                else:
+                    raw_answer = answer_raw or wait_result.answer or selected_answer
+                    answer_raw = raw_answer
+                    selected_details = _clean_bot_answer_candidate_details(raw_answer)
+                    selected_clean = selected_details["clean"] or selected_answer
+                if _dom_is_question_repetition(test_case.question, selected_clean or answer_raw):
+                    runtime.logger.info("[ANSWER] rejecting selected answer because it repeats the question")
+                    question_repetition_detected = True
+                    needs_retry_extraction = True
+                    raw_answer = ""
+                    answer_raw = ""
+                    selected_clean = ""
+                elif _dom_looks_truncated(selected_clean or answer_raw):
+                    runtime.logger.info("[ANSWER] rejecting selected answer because it looks truncated")
+                    truncated_answer_detected = True
+                    needs_retry_extraction = True
+                    raw_answer = ""
+                    answer_raw = ""
+                    selected_clean = ""
                 answer_normalized = selected_clean or _normalize_answer_text(answer_raw)
                 answer = answer_normalized
                 actual_answer = selected_clean or answer_normalized
                 actual_answer_clean = selected_clean or answer_normalized
+                cleaned_answer = actual_answer_clean
                 removed_followups = bool(selected_details.get("removed_followups", False))
                 noise_lines_removed = int(selected_details.get("noise_lines_removed", 0) or 0)
-                if selected_answer_raw == wait_result.answer and new_bot_response_detected:
-                    extraction_source_detail = "wait_verified"
-                elif selected_answer_raw == (last_answer_payload.get("answer_raw") or ""):
+                if selected_answer == dom_answer:
+                    extraction_source_detail = "dom_payload_cleaned"
+                elif selected_answer == last_answer_clean:
                     extraction_source_detail = str(last_answer_payload.get("extraction_source", "dom_fallback_cleaned"))
+                elif new_bot_response_detected:
+                    extraction_source_detail = "wait_verified"
                 else:
-                    extraction_source_detail = "dom_payload"
+                    extraction_source_detail = "wait_cleaned"
             raw_history = dom_payload.get("history", [])
             if _should_store_success_message_history(runtime.config):
                 message_history, history_noise_removed = _clean_message_history(
@@ -4293,8 +4451,10 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 if recovered_payload.get("detected") and submit_effect_verified and user_message_echo_verified:
                     new_bot_response_detected = True
                     answer_raw = str(recovered_payload.get("answer_raw") or "")
+                    raw_answer = answer_raw
                     actual_answer = str(recovered_payload.get("actual_answer") or "")
                     actual_answer_clean = str(recovered_payload.get("actual_answer_clean") or "")
+                    cleaned_answer = actual_answer_clean
                     answer_normalized = actual_answer_clean or _normalize_answer_text(answer_raw)
                     answer = actual_answer_clean or answer_normalized
                     extraction_source = "dom"
@@ -4306,8 +4466,14 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                         len(actual_answer_clean or answer_normalized),
                     )
 
-            dom_candidate = actual_answer_clean or actual_answer or answer_normalized or answer_raw or dom_answer
-            dom_answer_verified = new_bot_response_detected and _is_meaningful_answer_text(dom_candidate)
+            dom_candidate = cleaned_answer or actual_answer_clean or actual_answer or answer_normalized or answer_raw or dom_answer
+            dom_answer_verified = (
+                new_bot_response_detected
+                and not question_repetition_detected
+                and not truncated_answer_detected
+                and _is_meaningful_answer_text(dom_candidate)
+                and _has_minimal_question_alignment(test_case.question, dom_candidate)
+            )
 
             if dom_answer_verified:
                 extraction_source = "dom"
@@ -4327,9 +4493,11 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
                 ocr_text, confidence = extract_text_from_image(Path(ocr_target_path), runtime.logger) if ocr_target_path else ("", 0.0)
                 if ocr_text:
                     answer_raw = ocr_text
+                    raw_answer = ocr_text
                     ocr_details = _clean_bot_answer_candidate_details(ocr_text)
                     actual_answer = ocr_details["clean"] or _normalize_answer_text(ocr_text)
                     actual_answer_clean = actual_answer
+                    cleaned_answer = actual_answer_clean
                     answer_normalized = actual_answer_clean
                     answer = actual_answer_clean
                     extraction_source = "ocr"
@@ -4353,12 +4521,26 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
 
             if not answer_raw:
                 status = "failed"
-                input_failure_category = "answer_not_extracted"
-                reason = wait_result.reason or "No answer text extracted"
+                input_failure_category = (
+                    "question_repetition_detected"
+                    if question_repetition_detected
+                    else "truncated_answer_detected"
+                    if truncated_answer_detected
+                    else "answer_not_extracted"
+                )
+                reason = wait_result.reason or (
+                    "question repetition answer detected"
+                    if question_repetition_detected
+                    else "truncated answer detected after retry"
+                    if truncated_answer_detected
+                    else "No answer text extracted"
+                )
                 error_message = reason
                 input_failure_reason = reason
                 cleared = _clear_unverified_answer_fields()
                 answer = cleared["answer"]
+                raw_answer = ""
+                cleaned_answer = ""
                 answer_raw = cleared["answer_raw"]
                 answer_normalized = cleared["answer_normalized"]
                 actual_answer = cleared["actual_answer"]
@@ -4433,6 +4615,8 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         locale=test_case.locale,
         question=test_case.question,
         answer=answer,
+        raw_answer=raw_answer or answer_raw,
+        cleaned_answer=cleaned_answer or actual_answer_clean or answer,
         answer_raw=answer_raw,
         answer_normalized=answer_normalized,
         actual_answer=actual_answer or answer,
@@ -4456,6 +4640,8 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         evidence_markdown_path="",
         evidence_json_path="",
         fix_suggestion=fix_suggestion,
+        cta_stripped=cta_stripped,
+        promo_stripped=promo_stripped,
         input_dom_verified=input_dom_verified,
         submit_effect_verified=submit_effect_verified,
         input_verified=input_verified,
@@ -4505,6 +4691,9 @@ def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
         ocr_confidence=ocr_confidence,
         structured_message_history_count=structured_message_history_count,
         fallback_diff_used=fallback_diff_used,
+        question_repetition_detected=question_repetition_detected,
+        truncated_answer_detected=truncated_answer_detected,
+        needs_retry_extraction=needs_retry_extraction,
         message_history=message_history,
         message_history_clean=message_history_clean,
         removed_followups=removed_followups,

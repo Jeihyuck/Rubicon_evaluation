@@ -46,6 +46,66 @@ def _show_detailed_case(item: RunResult) -> bool:
     return item.pair.status != "success" or item.pair.run_mode == "debug"
 
 
+def _format_flags(flags: list[str]) -> str:
+    return " | ".join(flags) if flags else "(none)"
+
+
+def _reason_text(result: RunResult) -> str:
+    return result.evaluation.reason or result.pair.reason or "(none)"
+
+
+def _fix_suggestion_text(result: RunResult) -> str:
+    return result.evaluation.fix_suggestion or result.pair.fix_suggestion or "(none)"
+
+
+def _score_text(result: RunResult) -> str:
+    return f"{result.evaluation.overall_score:.1f} / 10"
+
+
+def _score_breakdown_text(result: RunResult) -> str:
+    evaluation = result.evaluation
+    return (
+        f"correctness={evaluation.correctness_score:.1f}, "
+        f"relevance={evaluation.relevance_score:.1f}, "
+        f"completeness={evaluation.completeness_score:.1f}, "
+        f"clarity={evaluation.clarity_score:.1f}, "
+        f"groundedness={evaluation.groundedness_score:.1f}"
+    )
+
+
+def _error_category_text(result: RunResult) -> str:
+    return str(result.to_result_record().get("error_category", "(none)"))
+
+
+def _language_policy_check_text(result: RunResult) -> str:
+    return str(result.to_result_record().get("language_policy_check", "pass"))
+
+
+def _cleaning_applied_text(result: RunResult) -> str:
+    applied: list[str] = []
+    if result.pair.cta_stripped:
+        applied.append("cta_stripped")
+    if result.pair.promo_stripped:
+        applied.append("promo_stripped")
+    return " | ".join(applied) if applied else "(none)"
+
+
+def _raw_clean_diff_text(result: RunResult) -> str:
+    raw_answer = result.pair.raw_answer or result.pair.answer_raw
+    cleaned_answer = result.pair.cleaned_answer or result.pair.actual_answer_clean or result.pair.answer
+    if raw_answer and cleaned_answer and raw_answer != cleaned_answer:
+        return "cleaned"
+    return "same"
+
+
+def _extraction_rejected_reason(result: RunResult) -> str:
+    if result.pair.question_repetition_detected:
+        return "question_repetition_detected"
+    if result.pair.truncated_answer_detected:
+        return "truncated_detected"
+    return "(none)"
+
+
 def format_case_console_block(result: RunResult) -> str:
     pair = result.pair
     evaluation = result.evaluation
@@ -56,7 +116,13 @@ def format_case_console_block(result: RunResult) -> str:
             [
                 f"ANSWER: {pair.answer}",
                 f"EXTRACTION SOURCE: {pair.extraction_source}",
-                f"OVERALL SCORE: {evaluation.overall_score:.2f}",
+                f"EVALUATION LANGUAGE: {evaluation.evaluation_language}",
+                f"SCORE: {_score_text(result)}",
+                f"SCORE BREAKDOWN: {_score_breakdown_text(result)}",
+                f"SCORE BREAKDOWN EXPLANATION: {evaluation.score_breakdown_explanation or '(none)'}",
+                f"REASON: {_reason_text(result)}",
+                f"FIX SUGGESTION: {_fix_suggestion_text(result)}",
+                f"FLAGS: {'|'.join(evaluation.flags) if evaluation.flags else '(none)'}",
                 f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}",
             ]
         )
@@ -68,7 +134,13 @@ def format_case_console_block(result: RunResult) -> str:
                 f"INPUT VERIFIED: {pair.input_verified}",
                 f"INPUT METHOD: {pair.input_method_used or '(none)'}",
                 f"SUBMIT METHOD USED: {pair.submit_method_used}",
-                f"REASON: {pair.reason or evaluation.reason}",
+                f"EVALUATION LANGUAGE: {evaluation.evaluation_language}",
+                f"SCORE: {_score_text(result)}",
+                f"SCORE BREAKDOWN: {_score_breakdown_text(result)}",
+                f"SCORE BREAKDOWN EXPLANATION: {evaluation.score_breakdown_explanation or '(none)'}",
+                f"REASON: {_reason_text(result)}",
+                f"FIX SUGGESTION: {_fix_suggestion_text(result)}",
+                f"FLAGS: {'|'.join(evaluation.flags) if evaluation.flags else '(none)'}",
             ]
         )
     lines.append("CHECK FIRST: reports/latest_conversation.md")
@@ -92,24 +164,38 @@ def _build_conversation(run_results: list[RunResult], config: AppConfig | None =
         heading_suffix = f" ({pair.case_id})"
 
         if not _show_detailed_case(item):
+            if index != 0:
+                lines.append("")
             lines.extend(
                 [
-                    "" if index == 0 else "",
                     f"## {pair.case_id}",
                     "",
                     f"- Question: {pair.question}",
                     f"- Final Answer: {pair.answer or '(none)'}",
+                    f"- Raw Answer: {pair.raw_answer or pair.answer_raw or '(none)'}",
+                    f"- Cleaned Answer: {pair.cleaned_answer or pair.actual_answer_clean or pair.answer or '(none)'}",
+                    f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
+                    f"- Cleaning Applied: {_cleaning_applied_text(item)}",
                     f"- Extraction Source: {pair.extraction_source}",
-                    f"- Score: {ev.overall_score}",
+                    f"- Evaluation Language: {ev.evaluation_language}",
+                    f"- Score: {_score_text(item)}",
+                    f"- Score Breakdown: {_score_breakdown_text(item)}",
+                    f"- Score Breakdown Explanation: {ev.score_breakdown_explanation or '(none)'}",
+                    f"- Reason: {_reason_text(item)}",
+                    f"- Fix Suggestion: {_fix_suggestion_text(item)}",
+                    f"- Error Category: {_error_category_text(item)}",
+                    f"- Language Policy Check: {_language_policy_check_text(item)}",
+                    f"- Flags: {_format_flags(ev.flags)}",
                 ]
             )
             if index != len(run_results) - 1:
                 lines.append("")
             continue
 
+        if index != 0:
+            lines.append("")
         lines.extend(
             [
-                "" if index == 0 else "",
                 f"## {pair.case_id}",
                 "",
                 f"- Question: {pair.question}",
@@ -144,12 +230,25 @@ def _build_conversation(run_results: list[RunResult], config: AppConfig | None =
                 f"- Availability Status: {pair.availability_status or 'unknown'}",
                 f"- Open Method Used: {pair.open_method_used or '(none)'}",
                 f"- Status: {pair.status}",
+                f"- Extraction Rejected Reason: {_extraction_rejected_reason(item)}",
                 f"- Actual Answer: {pair.actual_answer or pair.answer or '(none)'}",
                 f"- Actual Answer Clean: {pair.actual_answer_clean or pair.actual_answer or pair.answer or '(none)'}",
+                f"- Raw Answer: {pair.raw_answer or pair.answer_raw or '(none)'}",
+                f"- Cleaned Answer: {pair.cleaned_answer or pair.actual_answer_clean or pair.actual_answer or pair.answer or '(none)'}",
+                f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
+                f"- Cleaning Applied: {_cleaning_applied_text(item)}",
                 f"- Answer Raw: {pair.answer_raw or '(none)'}",
                 f"- Extraction Source: {pair.extraction_source}",
                 f"- Message History Clean: {pair.message_history_clean or '(none)'}",
-                f"- Overall Score: {ev.overall_score}",
+                f"- Evaluation Language: {ev.evaluation_language}",
+                f"- Score: {_score_text(item)}",
+                f"- Score Breakdown: {_score_breakdown_text(item)}",
+                f"- Score Breakdown Explanation: {ev.score_breakdown_explanation or '(none)'}",
+                f"- Reason: {_reason_text(item)}",
+                f"- Fix Suggestion: {_fix_suggestion_text(item)}",
+                f"- Error Category: {_error_category_text(item)}",
+                f"- Language Policy Check: {_language_policy_check_text(item)}",
+                f"- Flags: {_format_flags(ev.flags)}",
                 f"- Needs Human Review: {ev.needs_human_review}",
                 f"- Screenshot Path: {pair.after_answer_screenshot_path or pair.before_send_screenshot_path or pair.opened_footer_screenshot_path or pair.chat_screenshot_path or '(none)'}",
                 f"- Opened Footer Screenshot: {pair.opened_footer_screenshot_path or '(none)'}",
@@ -246,8 +345,16 @@ def _build_summary(run_results: list[RunResult], config: AppConfig | None = None
                     "",
                     f"- Question: {pair.question}",
                     f"- Final Answer: {pair.answer or '(none)'}",
+                    f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
+                    f"- Cleaning Applied: {_cleaning_applied_text(item)}",
                     f"- Extraction Source: {pair.extraction_source}",
-                    f"- Overall Score: {evaluation.overall_score}",
+                    f"- Evaluation Language: {evaluation.evaluation_language}",
+                    f"- Score: {_score_text(item)}",
+                    f"- Score Breakdown: {_score_breakdown_text(item)}",
+                    f"- Score Breakdown Explanation: {evaluation.score_breakdown_explanation or '(none)'}",
+                    f"- Reason: {_reason_text(item)}",
+                    f"- Fix Suggestion: {_fix_suggestion_text(item)}",
+                    f"- Flags: {_format_flags(evaluation.flags)}",
                     f"- Needs Human Review: {evaluation.needs_human_review}",
                     "",
                 ]
@@ -260,8 +367,13 @@ def _build_summary(run_results: list[RunResult], config: AppConfig | None = None
                 "## 최저 점수 케이스",
                 "",
                 f"- case_id: {lowest.pair.case_id}",
-                f"- score: {lowest.evaluation.overall_score:.2f}",
+                f"- evaluation_language: {lowest.evaluation.evaluation_language}",
+                f"- score: {_score_text(lowest)}",
+                f"- score_breakdown: {_score_breakdown_text(lowest)}",
+                f"- score_breakdown_explanation: {lowest.evaluation.score_breakdown_explanation or '(none)'}",
                 f"- reason: {lowest.evaluation.reason}",
+                f"- fix_suggestion: {_fix_suggestion_text(lowest)}",
+                f"- flags: {_format_flags(lowest.evaluation.flags)}",
             ]
         )
 
