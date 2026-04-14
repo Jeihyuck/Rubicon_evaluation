@@ -357,6 +357,36 @@ def test_select_report_answer_falls_back_to_dom_when_wait_answer_missing():
     assert selected == dom_answer
 
 
+def test_select_report_answer_rejects_stale_carryover_dom_answer():
+    wait_answer = ""
+    dom_answer = (
+        "4월 13일 (월) 갤럭시 S26 울트라의 디스플레이 크기와 카메라 구성 그리고 배터리 같은 핵심 사양을 알려주세요. "
+        "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다."
+    )
+
+    selected = _select_report_answer(
+        wait_answer,
+        dom_answer,
+        True,
+        question="갤럭시 버즈3 프로의 배터리 시간과 방수 등급 그리고 주요 오디오 기능을 알려주세요.",
+        baseline_last_answer="갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다.",
+        baseline_topic_family="phone",
+    )
+
+    assert selected == ""
+
+
+def test_select_report_answer_rejects_truncated_dom_answer():
+    selected = _select_report_answer(
+        "",
+        "갤럭시 북5 프로 360 16형은 무게 1.69kg, 배터리 76.1Wh, 포트는 HDMI 2.1 + 썬더볼트4 2개 + USB-A까지 갖춘 구성이에요. 요청하신 3가지 기준으로",
+        True,
+        question="갤럭시 북5 프로 360의 무게와 배터리 그리고 포트 구성을 알려주세요.",
+    )
+
+    assert selected == ""
+
+
 def test_wait_for_answer_completion_uses_fast_exit_for_meaningful_stable_answer(tmp_path):
     configure_runtime(_make_config(), create_logger(tmp_path / "runtime-fast-answer.log"))
 

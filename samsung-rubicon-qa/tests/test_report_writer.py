@@ -11,7 +11,7 @@ import pytest
 
 from app.config import AppConfig
 from app.evaluator import fallback_evaluation
-from app.models import EvalResult, ExtractedPair, RunResult, TestCase
+from app.models import EvalResult, ExtractedPair, RunResult, RuntimeMetadata, TestCase
 from app.report_writer import _build_summary, format_case_console_block, write_reports
 from app.utils import utc_now_timestamp
 
@@ -43,7 +43,7 @@ def _make_config(tmpdir: str) -> AppConfig:
     )
 
 
-def _make_result(case_id: str = "c01", status: str = "success", score: float = 8.0, run_mode: str = "speed") -> RunResult:
+def _make_result(case_id: str = "c01", status: str = "passed", score: float = 8.0, run_mode: str = "speed") -> RunResult:
     test_case = TestCase(
         id=case_id,
         category="service",
@@ -72,8 +72,9 @@ def _make_result(case_id: str = "c01", status: str = "success", score: float = 8
         answer_normalized="서비스센터에서 가능합니다.",
         actual_answer="서비스센터에서 가능합니다.",
         actual_answer_clean="서비스센터에서 가능합니다.",
+        ui_noise_stripped=True,
         cta_stripped=True,
-        error_message="" if status == "success" else "timeout",
+        error_message="" if status == "passed" else "timeout",
     )
     evaluation = EvalResult(
         overall_score=score,
@@ -92,7 +93,18 @@ def _make_result(case_id: str = "c01", status: str = "success", score: float = 8
         fix_suggestion="",
         flags=[],
     )
-    return RunResult(test_case=test_case, pair=pair, evaluation=evaluation)
+    return RunResult(
+        test_case=test_case,
+        pair=pair,
+        evaluation=evaluation,
+        runtime_metadata=RuntimeMetadata(
+            branch="test-branch",
+            commit_sha="abc123",
+            extractor_version="extractor-test",
+            evaluator_version="evaluator-test",
+            run_mode=run_mode,
+        ),
+    )
 
 
 class TestWriteReports:
@@ -159,17 +171,15 @@ class TestWriteReports:
 class TestBuildSummary:
     def test_summary_counts(self):
         results = [
-            _make_result("c01", status="success", score=0.9),
+            _make_result("c01", status="passed", score=0.9),
             _make_result("c02", status="failed", score=0.2),
         ]
         summary = _build_summary(results)
         assert "총 케이스 수: 2" in summary
-        assert "성공 수: 1" in summary
-        assert "실패 수: 1" in summary
+        assert "passed 수: 1" in summary
+        assert "failed 수: 1" in summary
         assert "Question: 배터리 교체는 어디서?" in summary
         assert "Final Answer: 서비스센터에서 가능합니다." in summary
-        assert "Evaluation Language: ko" in summary
-        assert "Score Breakdown:" in summary
         assert "Reason: 질문에 맞는 답변입니다." in summary
         assert "Fix Suggestion: (none)" in summary
         assert "Flags: (none)" in summary
@@ -265,6 +275,7 @@ class TestBuildConversation:
         assert "Open Method Used:" in content
         assert "Actual Answer:" in content
         assert "Actual Answer Clean:" in content
+        assert "Final Answer:" in content
         assert "Answer Raw:" in content
         assert "Extraction Source:" in content
         assert "Message History Clean:" in content
@@ -291,17 +302,29 @@ class TestBuildConversation:
             paths = write_reports(config, [_make_result("c01")])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "Final Answer: 서비스센터에서 가능합니다." in content
-        assert "Evaluation Language: ko" in content
         assert "Score: 8.0 / 10" in content
-        assert "Raw/Clean Diff: cleaned" in content
-        assert "Cleaning Applied: cta_stripped" in content
         assert "Reason: 질문에 맞는 답변입니다." in content
         assert "Fix Suggestion: (none)" in content
         assert "Error Category: (none)" in content
-        assert "Language Policy Check: pass" in content
         assert "Flags: (none)" in content
+        assert "Needs Human Review: False" in content
+        assert "Raw Answer:" not in content
+        assert "Cleaned Answer:" not in content
+        assert "Raw/Clean Diff:" not in content
+        assert "Cleaning Applied:" not in content
         assert "Screenshot Path:" not in content
         assert "Video Path:" not in content
+
+    def test_success_report_does_not_include_raw_clean_fields_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [_make_result("c01")])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Raw Answer:" not in content
+        assert "Cleaned Answer:" not in content
+        assert "Raw/Clean Diff:" not in content
+        assert "Cleaning Applied:" not in content
 
     def test_conversation_includes_priority_error_category(self):
         result = _make_result("c01", status="failed", run_mode="debug")
@@ -340,12 +363,46 @@ class TestBuildConversation:
 
     def test_console_block_includes_reason_fix_and_flags(self):
         block = format_case_console_block(_make_result("c01"))
-        assert "EVALUATION LANGUAGE:" in block
-        assert "SCORE BREAKDOWN:" in block
-        assert "SCORE BREAKDOWN EXPLANATION:" in block
         assert "REASON:" in block
         assert "FIX SUGGESTION:" in block
+        assert "ERROR CATEGORY:" in block
         assert "FLAGS:" in block
+        assert "NEEDS HUMAN REVIEW:" in block
+
+    def test_summary_counts_retry_and_invalid_answer_statuses(self):
+        summary = _build_summary(
+            [
+                _make_result("c01", status="passed"),
+                _make_result("c02", status="retry_extraction"),
+                _make_result("c03", status="invalid_answer"),
+            ]
+        )
+        assert "passed 수: 1" in summary
+        assert "retry_extraction 수: 1" in summary
+        assert "invalid_answer 수: 1" in summary
+
+    def test_retry_and_invalid_answer_cases_show_debug_fields(self):
+        result = replace(
+            _make_result("c02", status="invalid_answer", run_mode="speed"),
+            pair=replace(
+                _make_result("c02", status="invalid_answer", run_mode="speed").pair,
+                question_repetition_detected=True,
+                truncated_detected=True,
+                carryover_detected=True,
+                keyword_coverage_score=0.12,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Raw Answer:" in content
+        assert "Cleaned Answer:" in content
+        assert "question_repetition_detected: True" in content
+        assert "truncated_detected: True" in content
+        assert "carryover_detected: True" in content
+        assert "keyword_coverage_score: 0.12" in content
 
     def test_conversation_empty_history(self):
         """Speed success conversation omits message history section entirely."""

@@ -140,9 +140,9 @@ def test_loading_placeholder_is_not_treated_as_answer():
 
 def test_loading_placeholder_with_long_body_does_not_recurse():
     raw = (
-        "답변 생성 중 갤럭시 S26 울트라 혜택과 리뷰까지 함께 정리하고 있어요. "
+        "답변 생성 중 갤럭시 S26 울트라 핵심 사양을 함께 정리하고 있어요. "
         "갤럭시 S26 울트라 디스플레이는 6.9형이고, 후면은 4카메라 구성, 배터리는 5,000mAh예요. "
-        "핵심만 딱 정리하면 아래처럼 보시면 돼요. 디스플레이 6.9형 Dynamic AMOLED 2X "
+        "상세 사양은 아래처럼 보시면 돼요. 디스플레이 6.9형 Dynamic AMOLED 2X "
         "QHD+ 해상도 3120×1440, 최대 120Hz 카메라 구성 후면 4개."
     )
 

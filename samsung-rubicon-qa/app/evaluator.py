@@ -32,6 +32,8 @@ ALLOWED_FLAGS = {
     "evaluation_failed",
 }
 
+EVALUATOR_VERSION = "evaluator-v2.4"
+
 FLAG_REASON_SNIPPETS = {
     "question_repetition": {
         "ko": "답변이 질문을 반복할 뿐 실제 정보를 제공하지 않습니다",
@@ -129,7 +131,6 @@ FLAG_FIX_SUGGESTIONS = {
 UNANNOUNCED_PRODUCT_PATTERNS = [
     r"\bwatch ultra \(2025\)\b",
     r"\bbuds4 pro\b",
-    r"\bs26\b",
 ]
 
 RELEASED_PRODUCT_OVERRIDES = [
@@ -139,6 +140,26 @@ RELEASED_PRODUCT_OVERRIDES = [
     "galaxy s26",
     "galaxy s26 ultra",
     "galaxy s26 plus",
+    "갤럭시 링",
+    "galaxy ring",
+    "갤럭시 버즈3 프로",
+    "galaxy buds3 pro",
+    "갤럭시 워치7",
+    "galaxy watch7",
+    "갤럭시 워치 울트라",
+    "galaxy watch ultra",
+    "갤럭시 북5 프로 360",
+    "galaxy book5 pro 360",
+    "비스포크 ai 콤보",
+    "비스포크 냉장고",
+    "bespoke",
+    "오디세이 oled g8",
+    "odyssey oled g8",
+    "오디세이 neo g9",
+    "odyssey neo g9",
+    "neo qled",
+    "samsung oled tv",
+    "삼성 oled tv",
 ]
 
 CLEANING_FIX_SUGGESTION = {
@@ -147,6 +168,11 @@ CLEANING_FIX_SUGGESTION = {
 }
 
 SENSITIVE_COMMERCE_PATTERNS = [
+    r"가격",
+    r"혜택",
+    r"할인",
+    r"쿠폰",
+    r"사은품",
     r"재고",
     r"구매 가능",
     r"현재 구매 가능",
@@ -437,8 +463,45 @@ def _looks_speculative_unverified(question: str, answer: str) -> bool:
     if has_sensitive_commerce_claim:
         return True
     if has_released_override:
-        return has_speculative_cue or exact_spec_count >= 3
+        return has_speculative_cue
     return has_speculative_cue or (asks_unannounced and has_exact_specs)
+
+
+def _sanitize_released_override_text(text: str, question: str, answer: str) -> str:
+    normalized = _normalize_answer_text(text)
+    if not normalized:
+        return normalized
+    if not (_contains_released_override(question) or _contains_released_override(answer)):
+        return normalized
+
+    replacements = {
+        "공개되지 않은 제품": "공식 근거가 확인되지 않은 세부 정보",
+        "미공개 제품": "공식 근거가 확인되지 않은 세부 정보",
+        "아직 미공개": "아직 공식 근거가 확인되지 않음",
+    }
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+    return normalized
+
+
+def _normalize_speculative_flag(question: str, answer: str, flags: list[str]) -> list[str]:
+    if "speculative_unverified" not in flags:
+        return flags
+
+    lowered_question = _normalize_answer_text(question).lower()
+    lowered_answer = _normalize_answer_text(answer).lower()
+    if not lowered_question or not lowered_answer:
+        return flags
+
+    speculative_cues = ["예상", "루머", "추정", "미정", "예정", "가능성", "rumor", "expected", "unconfirmed"]
+    asks_unannounced = any(re.search(pattern, lowered_question) for pattern in UNANNOUNCED_PRODUCT_PATTERNS)
+    has_speculative_cue = any(cue in lowered_answer for cue in speculative_cues)
+    has_released_override = _contains_released_override(lowered_question) or _contains_released_override(lowered_answer)
+    has_sensitive_commerce_claim = any(re.search(pattern, lowered_answer, re.IGNORECASE) for pattern in SENSITIVE_COMMERCE_PATTERNS)
+
+    if has_released_override and not has_speculative_cue and not asks_unannounced and not has_sensitive_commerce_claim:
+        return [flag for flag in flags if flag != "speculative_unverified"]
+    return flags
 
 
 def _language_mismatch(text: str, target_language: str) -> bool:
@@ -792,7 +855,10 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     normalized_answer = _normalize_answer_text(_evaluation_answer(pair))
     flags = list(result.flags)
     target_language = detect_evaluation_language(test_case.question, pair.locale)
-    keyword_coverage = _keyword_coverage(test_case.question, normalized_answer, test_case.expected_keywords)
+    keyword_coverage = max(
+        _keyword_coverage(test_case.question, normalized_answer, test_case.expected_keywords),
+        float(getattr(pair, "keyword_coverage_score", 0.0) or 0.0),
+    )
 
     correctness_score = result.correctness_score
     relevance_score = result.relevance_score
@@ -808,9 +874,13 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         lowered_answer = normalized_answer.lower()
         if not any(keyword.lower() in lowered_answer for keyword in test_case.expected_keywords):
             _append_flag(flags, "weak_keyword_alignment")
-    if pair.extraction_confidence < 0.6 or pair.extraction_source != "dom":
+    if getattr(pair, "question_repetition_detected", False):
+        _append_flag(flags, "question_repetition")
+    if getattr(pair, "carryover_detected", False):
+        _append_flag(flags, "off_topic_or_carryover")
+    if pair.extraction_source == "unknown" or pair.extraction_confidence < 0.45:
         _append_flag(flags, "low_confidence_extraction")
-    if _looks_truncated(normalized_answer):
+    if getattr(pair, "truncated_detected", False) or getattr(pair, "truncated_answer_detected", False) or _looks_truncated(normalized_answer):
         _append_flag(flags, "truncated_answer")
     if _contains_promo_or_product_card_text(normalized_answer):
         _append_flag(flags, "promo_or_product_card_leak")
@@ -818,6 +888,8 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         _append_flag(flags, "question_repetition")
     if _looks_speculative_unverified(test_case.question, normalized_answer):
         _append_flag(flags, "speculative_unverified")
+
+    flags = _normalize_speculative_flag(test_case.question, normalized_answer, flags)
 
     question_family = _detect_topic_family(test_case.question)
     answer_family = _detect_topic_family(normalized_answer)
@@ -848,6 +920,12 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     if "speculative_unverified" in flags:
         groundedness_score = min(groundedness_score, 0.3)
         correctness_score = min(correctness_score, 1.8)
+    elif _contains_released_override(test_case.question) or _contains_released_override(normalized_answer):
+        lowered_answer = normalized_answer.lower()
+        exact_spec_count = len(re.findall(r"\b\d+(?:\.\d+)?\s*(?:mp|mah|wh|kg|hz|gb|mm|형|inch|원)\b", lowered_answer))
+        has_sensitive_commerce_claim = any(re.search(pattern, lowered_answer, re.IGNORECASE) for pattern in SENSITIVE_COMMERCE_PATTERNS)
+        if has_sensitive_commerce_claim or exact_spec_count >= 3:
+            groundedness_score = min(groundedness_score, 0.5)
 
     if "truncated_answer" in flags:
         completeness_score = min(completeness_score, 0.6)
@@ -860,6 +938,16 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     if "too_short" in flags:
         completeness_score = min(completeness_score, 0.3)
 
+    if pair.status in {"retry_extraction", "invalid_answer"}:
+        needs_human_review = True
+        if pair.status == "invalid_answer":
+            overall_cap = 2.5
+        else:
+            overall_cap = 4.5
+    else:
+        needs_human_review = result.needs_human_review or bool(flags)
+        overall_cap = 10.0
+
     overall_score = _round_score(
         correctness_score + relevance_score + completeness_score + clarity_score + groundedness_score
     )
@@ -868,7 +956,7 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     if "off_topic_or_carryover" in flags:
         overall_score = min(overall_score, 1.5)
 
-    needs_human_review = result.needs_human_review or bool(flags)
+    overall_score = min(overall_score, overall_cap)
     if "off_topic_or_carryover" in flags or "question_repetition" in flags:
         needs_human_review = True
 
@@ -934,8 +1022,8 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         keyword_alignment_score=updated.keyword_alignment_score,
         hallucination_risk=updated.hallucination_risk,
         needs_human_review=updated.needs_human_review,
-        reason=_augment_reason(updated.reason, flags, target_language),
-        fix_suggestion=_augment_fix_suggestion(updated.fix_suggestion, flags, target_language),
+        reason=_sanitize_released_override_text(_augment_reason(updated.reason, flags, target_language), test_case.question, normalized_answer),
+        fix_suggestion=_sanitize_released_override_text(_augment_fix_suggestion(updated.fix_suggestion, flags, target_language), test_case.question, normalized_answer),
         flags=flags,
     )
     return _localize_result_texts(updated, target_language)

@@ -2,18 +2,42 @@
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
 from app.browser import BrowserManager
 from app.config import load_config
 from app.csv_loader import load_test_cases
-from app.evaluator import build_input_not_verified_evaluation, detect_evaluation_language, evaluate_pair
+from app.dom_extractor import EXTRACTOR_VERSION
+from app.evaluator import EVALUATOR_VERSION, build_input_not_verified_evaluation, detect_evaluation_language, evaluate_pair
 from app.logger import create_logger
-from app.models import RunResult
+from app.models import RunResult, RuntimeMetadata
 from app.report_writer import format_case_console_block, write_reports
 from app.samsung_rubicon import configure_runtime, run_single_case
 from app.utils import artifact_timestamp, sanitize_filename
+
+
+def _git_value(project_root: Path, *args: str) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", *args],
+            cwd=project_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _collect_runtime_metadata(project_root: Path, run_mode: str) -> RuntimeMetadata:
+    return RuntimeMetadata(
+        branch=_git_value(project_root, "rev-parse", "--abbrev-ref", "HEAD"),
+        commit_sha=_git_value(project_root, "rev-parse", "HEAD"),
+        extractor_version=EXTRACTOR_VERSION,
+        evaluator_version=EVALUATOR_VERSION,
+        run_mode=run_mode,
+    )
 
 
 def _display_path(project_root: Path, value: str) -> str:
@@ -113,6 +137,15 @@ def run(project_root: Path | None = None) -> list[RunResult]:
     logger = create_logger(config.runtime_log_path)
     logger.info("app start")
     logger.info("config loaded")
+    runtime_metadata = _collect_runtime_metadata(config.project_root, config.run_mode)
+    logger.info(
+        "runtime metadata: branch=%s commit=%s extractor=%s evaluator=%s run_mode=%s",
+        runtime_metadata.branch,
+        runtime_metadata.commit_sha,
+        runtime_metadata.extractor_version,
+        runtime_metadata.evaluator_version,
+        runtime_metadata.run_mode,
+    )
 
     test_cases = load_test_cases(
         config.questions_csv_path,
@@ -137,7 +170,7 @@ def run(project_root: Path | None = None) -> list[RunResult]:
 
             trace_path, video_path = session.close(trace_target=trace_target, video_target=video_target)
             pair = replace(pair, trace_path=trace_path, video_path=video_path)
-            if pair.status == "success" and config.keep_only_failure_artifacts:
+            if pair.status == "passed" and config.keep_only_failure_artifacts:
                 pair = _cleanup_success_artifacts(pair)
 
             evaluation = _ensure_input_not_verified_flag(
@@ -145,13 +178,24 @@ def run(project_root: Path | None = None) -> list[RunResult]:
                 evaluate_pair(config, test_case, pair, logger, target_language=target_language),
                 target_language,
             )
-            run_result = RunResult(test_case=test_case, pair=pair, evaluation=evaluation)
+            run_result = RunResult(
+                test_case=test_case,
+                pair=pair,
+                evaluation=evaluation,
+                runtime_metadata=runtime_metadata,
+            )
             results.append(run_result)
             _print_case_summary(config.project_root, run_result)
     finally:
         browser_manager.stop()
 
-    report_paths = write_reports(config, results)
+    report_paths = write_reports(config, results, runtime_metadata={
+        "branch": runtime_metadata.branch,
+        "commit_sha": runtime_metadata.commit_sha,
+        "extractor_version": runtime_metadata.extractor_version,
+        "evaluator_version": runtime_metadata.evaluator_version,
+        "run_mode": runtime_metadata.run_mode,
+    })
     logger.info("report written")
     logger.info("check results in this order:")
     logger.info("1. %s", report_paths["conversation"])

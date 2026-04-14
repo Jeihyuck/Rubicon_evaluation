@@ -39,7 +39,7 @@ def _make_pair(case_id: str = "c01") -> ExtractedPair:
         extraction_source="dom",
         extraction_confidence=1.0,
         response_ms=1000,
-        status="success",
+        status="passed",
         raw_answer="서비스센터에서 가능합니다.",
         cleaned_answer="서비스센터에서 가능합니다.",
         answer_raw="서비스센터에서 가능합니다.",
@@ -134,7 +134,10 @@ class TestExtractedPair:
         assert pair.cta_stripped is False
         assert pair.promo_stripped is False
         assert pair.question_repetition_detected is False
+        assert pair.truncated_detected is False
         assert pair.truncated_answer_detected is False
+        assert pair.carryover_detected is False
+        assert pair.keyword_coverage_score == 0.0
         assert pair.needs_retry_extraction is False
 
     def test_invalid_capture_status(self):

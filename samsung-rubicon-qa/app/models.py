@@ -12,8 +12,10 @@ ERROR_CATEGORY_PRIORITY = [
     "question_repetition",
     "off_topic_or_carryover",
     "truncated_answer",
+    "invalid_answer",
     "speculative_unverified",
     "promo_or_product_card_leak",
+    "low_confidence_extraction",
     "weak_keyword_alignment",
     "too_short",
 ]
@@ -50,11 +52,24 @@ def _language_policy_check(question: str, locale: str, reason: str, fix_suggesti
     return "fail" if _looks_korean_heavy(combined) else "pass"
 
 
-def _primary_error_category(flags: list[str]) -> str:
+def _primary_error_category(flags: list[str], status: str = "") -> str:
     for flag in ERROR_CATEGORY_PRIORITY:
         if flag in flags:
             return flag
+    if status == "invalid_answer":
+        return "invalid_answer"
     return "(none)"
+
+
+def _serialize_cleaning_applied(ui_noise_stripped: bool, cta_stripped: bool, promo_stripped: bool) -> str:
+    applied: list[str] = []
+    if ui_noise_stripped:
+        applied.append("ui_noise_stripped")
+    if cta_stripped:
+        applied.append("cta_stripped")
+    if promo_stripped:
+        applied.append("promo_stripped")
+    return "|".join(applied)
 
 
 @dataclass(slots=True)
@@ -84,7 +99,7 @@ class ExtractedPair:
     extraction_source: Literal["dom", "ocr", "unknown"]
     extraction_confidence: float
     response_ms: int
-    status: Literal["success", "failed", "invalid_capture"]
+    status: Literal["passed", "retry_extraction", "invalid_answer", "failed", "invalid_capture"]
     raw_answer: str = ""
     cleaned_answer: str = ""
     answer_raw: str = ""
@@ -93,6 +108,7 @@ class ExtractedPair:
     actual_answer_clean: str = ""
     extraction_source_detail: str = ""
     message_history_clean: str = ""
+    ui_noise_stripped: bool = False
     cta_stripped: bool = False
     promo_stripped: bool = False
     removed_followups: bool = False
@@ -161,9 +177,36 @@ class ExtractedPair:
     structured_message_history_count: int = 0
     fallback_diff_used: bool = False
     question_repetition_detected: bool = False
+    truncated_detected: bool = False
     truncated_answer_detected: bool = False
+    carryover_detected: bool = False
+    keyword_coverage_score: float = 0.0
     needs_retry_extraction: bool = False
     message_history: list[str] = field(default_factory=list)
+
+    @property
+    def final_answer(self) -> str:
+        return self.cleaned_answer or self.actual_answer_clean or self.actual_answer or self.answer
+
+    @property
+    def debug_raw_answer(self) -> str:
+        return self.raw_answer or self.answer_raw
+
+    @property
+    def debug_cleaned_answer(self) -> str:
+        return self.cleaned_answer or self.actual_answer_clean or self.final_answer
+
+    @property
+    def raw_clean_diff(self) -> str:
+        raw_answer = self.debug_raw_answer
+        cleaned_answer = self.debug_cleaned_answer
+        if raw_answer and cleaned_answer and raw_answer != cleaned_answer:
+            return "cleaned"
+        return "same"
+
+    @property
+    def cleaning_applied(self) -> str:
+        return _serialize_cleaning_applied(self.ui_noise_stripped, self.cta_stripped, self.promo_stripped)
 
 
 @dataclass(slots=True)
@@ -188,12 +231,24 @@ class EvalResult:
 
 
 @dataclass(slots=True)
+class RuntimeMetadata:
+    """Runtime metadata captured at execution start for reproducibility."""
+
+    branch: str = "unknown"
+    commit_sha: str = "unknown"
+    extractor_version: str = "unknown"
+    evaluator_version: str = "unknown"
+    run_mode: str = "unknown"
+
+
+@dataclass(slots=True)
 class RunResult:
     """Combined execution and evaluation result for a test case."""
 
     test_case: TestCase
     pair: ExtractedPair
     evaluation: EvalResult
+    runtime_metadata: RuntimeMetadata | None = None
 
     @staticmethod
     def _serialize_flags(flags: list[str]) -> str:
@@ -206,6 +261,7 @@ class RunResult:
             "test_case": asdict(self.test_case),
             "pair": asdict(self.pair),
             "evaluation": asdict(self.evaluation),
+            "runtime_metadata": asdict(self.runtime_metadata) if self.runtime_metadata is not None else None,
         }
 
     def to_flat_dict(self) -> dict[str, Any]:
@@ -226,13 +282,15 @@ class RunResult:
         evaluation_reason = self.evaluation.reason or self.pair.reason
         evaluation_fix_suggestion = self.evaluation.fix_suggestion or self.pair.fix_suggestion
         serialized_flags = self._serialize_flags(self.evaluation.flags)
+        final_answer = self.pair.final_answer
         language_policy = _language_policy_check(
             self.pair.question,
             self.pair.locale,
             evaluation_reason,
             evaluation_fix_suggestion,
         )
-        error_category = _primary_error_category(self.evaluation.flags)
+        error_category = _primary_error_category(self.evaluation.flags, self.pair.status)
+        runtime_metadata = asdict(self.runtime_metadata) if self.runtime_metadata is not None else {}
 
         return {
             "run_timestamp": self.pair.run_timestamp,
@@ -241,13 +299,14 @@ class RunResult:
             "page_url": self.pair.page_url,
             "locale": self.pair.locale,
             "question": self.pair.question,
-            "answer": self.pair.answer,
-            "raw_answer": self.pair.raw_answer or self.pair.answer_raw,
-            "cleaned_answer": self.pair.cleaned_answer or self.pair.actual_answer_clean or self.pair.answer,
+            "answer": final_answer,
+            "final_answer": final_answer,
+            "raw_answer": self.pair.debug_raw_answer,
+            "cleaned_answer": self.pair.debug_cleaned_answer,
             "answer_raw": self.pair.answer_raw,
             "answer_normalized": self.pair.answer_normalized,
-            "actual_answer": self.pair.actual_answer or self.pair.answer,
-            "actual_answer_clean": self.pair.actual_answer_clean or self.pair.actual_answer or self.pair.answer,
+            "actual_answer": self.pair.actual_answer or final_answer,
+            "actual_answer_clean": self.pair.actual_answer_clean or self.pair.actual_answer or final_answer,
             "input_dom_verified": self.pair.input_dom_verified,
             "submit_effect_verified": self.pair.submit_effect_verified,
             "input_verified": self.pair.input_verified,
@@ -265,6 +324,8 @@ class RunResult:
             "fix_suggestion": evaluation_fix_suggestion,
             "execution_fix_suggestion": self.pair.fix_suggestion,
             "flags": serialized_flags,
+            "raw_clean_diff": self.pair.raw_clean_diff,
+            "cleaning_applied": self.pair.cleaning_applied or "(none)",
             "message_history": self.pair.message_history,
             "message_history_clean": self.pair.message_history_clean,
             "html_fragment_path": self.pair.html_fragment_path,
@@ -280,8 +341,12 @@ class RunResult:
             "ocr_confidence": self.pair.ocr_confidence,
             "structured_message_history_count": self.pair.structured_message_history_count,
             "fallback_diff_used": self.pair.fallback_diff_used,
+            "ui_noise_stripped": self.pair.ui_noise_stripped,
             "question_repetition_detected": self.pair.question_repetition_detected,
+            "truncated_detected": self.pair.truncated_detected,
             "truncated_answer_detected": self.pair.truncated_answer_detected,
+            "carryover_detected": self.pair.carryover_detected,
+            "keyword_coverage_score": self.pair.keyword_coverage_score,
             "needs_retry_extraction": self.pair.needs_retry_extraction,
             "input_scope": self.pair.input_scope or self.pair.input_scope_name,
             "input_selector": self.pair.input_selector,
@@ -340,6 +405,7 @@ class RunResult:
             "video_path": self.pair.video_path,
             "trace_path": self.pair.trace_path,
             "evaluation": asdict(self.evaluation),
+            **runtime_metadata,
         }
 
 
@@ -366,6 +432,8 @@ class ResolvedChatContext:
     input_candidates_debug: str = ""
     baseline_bot_count: int = 0
     baseline_bot_messages: list[str] = field(default_factory=list)
+    baseline_last_answer: str = ""
+    baseline_topic_family: str = "unknown"
     baseline_history: list[str] = field(default_factory=list)
     baseline_visible_text: str = ""
     baseline_message_nodes_snapshot: list[str] = field(default_factory=list)

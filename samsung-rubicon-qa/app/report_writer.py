@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import csv
 from statistics import mean
+from typing import Any
 
 from app.config import AppConfig
 from app.models import RunResult
 from app.utils import write_json
 
 
-def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, str]:
+def write_reports(
+    config: AppConfig,
+    run_results: list[RunResult],
+    runtime_metadata: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Write the latest JSON, CSV, Markdown summary, and conversation report files."""
 
     json_path = config.reports_dir / "latest_results.json"
@@ -28,8 +33,8 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
         writer.writeheader()
         writer.writerows(flat_rows)
 
-    summary_path.write_text(_build_summary(run_results, config), encoding="utf-8")
-    _write_latest_conversation(run_results, conversation_path, config)
+    summary_path.write_text(_build_summary(run_results, config, runtime_metadata=runtime_metadata), encoding="utf-8")
+    _write_latest_conversation(run_results, conversation_path, config, runtime_metadata=runtime_metadata)
     return {
         "json": str(json_path),
         "csv": str(csv_path),
@@ -38,12 +43,12 @@ def write_reports(config: AppConfig, run_results: list[RunResult]) -> dict[str, 
     }
 
 
-def _write_latest_conversation(results: list[RunResult], path, config: AppConfig) -> None:
-    path.write_text(_build_conversation(results, config), encoding="utf-8")
+def _write_latest_conversation(results: list[RunResult], path, config: AppConfig, runtime_metadata: dict[str, str] | None = None) -> None:
+    path.write_text(_build_conversation(results, config, runtime_metadata=runtime_metadata), encoding="utf-8")
 
 
 def _show_detailed_case(item: RunResult) -> bool:
-    return item.pair.status != "success" or item.pair.run_mode == "debug"
+    return item.pair.status != "passed" or item.pair.run_mode == "debug"
 
 
 def _format_flags(flags: list[str]) -> str:
@@ -82,20 +87,30 @@ def _language_policy_check_text(result: RunResult) -> str:
 
 
 def _cleaning_applied_text(result: RunResult) -> str:
-    applied: list[str] = []
-    if result.pair.cta_stripped:
-        applied.append("cta_stripped")
-    if result.pair.promo_stripped:
-        applied.append("promo_stripped")
-    return " | ".join(applied) if applied else "(none)"
+    return result.pair.cleaning_applied.replace("|", " | ") if result.pair.cleaning_applied else "(none)"
 
 
 def _raw_clean_diff_text(result: RunResult) -> str:
-    raw_answer = result.pair.raw_answer or result.pair.answer_raw
-    cleaned_answer = result.pair.cleaned_answer or result.pair.actual_answer_clean or result.pair.answer
-    if raw_answer and cleaned_answer and raw_answer != cleaned_answer:
-        return "cleaned"
-    return "same"
+    return result.pair.raw_clean_diff
+
+
+def _final_answer_text(result: RunResult) -> str:
+    return result.pair.final_answer or "(none)"
+
+
+def _runtime_metadata_lines(runtime_metadata: dict[str, str] | None) -> list[str]:
+    if not runtime_metadata:
+        return []
+    return [
+        "",
+        "## Runtime Metadata",
+        "",
+        f"- Branch: {runtime_metadata.get('branch', 'unknown')}",
+        f"- Commit SHA: {runtime_metadata.get('commit_sha', 'unknown')}",
+        f"- Extractor Version: {runtime_metadata.get('extractor_version', 'unknown')}",
+        f"- Evaluator Version: {runtime_metadata.get('evaluator_version', 'unknown')}",
+        f"- Run Mode: {runtime_metadata.get('run_mode', 'unknown')}",
+    ]
 
 
 def _extraction_rejected_reason(result: RunResult) -> str:
@@ -111,17 +126,15 @@ def format_case_console_block(result: RunResult) -> str:
     evaluation = result.evaluation
     lines = ["=" * 50, f"CASE: {pair.case_id}", f"QUESTION: {pair.question}", f"STATUS: {pair.status}"]
 
-    if pair.status == "success":
+    if pair.status == "passed":
         lines.extend(
             [
-                f"ANSWER: {pair.answer}",
+                f"ANSWER: {pair.final_answer}",
                 f"EXTRACTION SOURCE: {pair.extraction_source}",
-                f"EVALUATION LANGUAGE: {evaluation.evaluation_language}",
                 f"SCORE: {_score_text(result)}",
-                f"SCORE BREAKDOWN: {_score_breakdown_text(result)}",
-                f"SCORE BREAKDOWN EXPLANATION: {evaluation.score_breakdown_explanation or '(none)'}",
                 f"REASON: {_reason_text(result)}",
                 f"FIX SUGGESTION: {_fix_suggestion_text(result)}",
+                f"ERROR CATEGORY: {_error_category_text(result)}",
                 f"FLAGS: {'|'.join(evaluation.flags) if evaluation.flags else '(none)'}",
                 f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}",
             ]
@@ -148,7 +161,11 @@ def format_case_console_block(result: RunResult) -> str:
     return "\n".join(lines)
 
 
-def _build_conversation(run_results: list[RunResult], config: AppConfig | None = None) -> str:
+def _build_conversation(
+    run_results: list[RunResult],
+    config: AppConfig | None = None,
+    runtime_metadata: dict[str, str] | None = None,
+) -> str:
     """Build the main per-case evidence report for human review."""
 
     lines = [
@@ -157,6 +174,7 @@ def _build_conversation(run_results: list[RunResult], config: AppConfig | None =
         "가장 먼저 확인해야 할 파일이다.",
         "이 파일에 질문, 입력 검증 여부, 새 응답 여부, 실제 답변, 평가 결과, 스크린샷 경로를 함께 기록한다.",
     ]
+    lines.extend(_runtime_metadata_lines(runtime_metadata))
 
     for index, item in enumerate(run_results):
         pair = item.pair
@@ -171,21 +189,14 @@ def _build_conversation(run_results: list[RunResult], config: AppConfig | None =
                     f"## {pair.case_id}",
                     "",
                     f"- Question: {pair.question}",
-                    f"- Final Answer: {pair.answer or '(none)'}",
-                    f"- Raw Answer: {pair.raw_answer or pair.answer_raw or '(none)'}",
-                    f"- Cleaned Answer: {pair.cleaned_answer or pair.actual_answer_clean or pair.answer or '(none)'}",
-                    f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
-                    f"- Cleaning Applied: {_cleaning_applied_text(item)}",
+                    f"- Final Answer: {_final_answer_text(item)}",
                     f"- Extraction Source: {pair.extraction_source}",
-                    f"- Evaluation Language: {ev.evaluation_language}",
                     f"- Score: {_score_text(item)}",
-                    f"- Score Breakdown: {_score_breakdown_text(item)}",
-                    f"- Score Breakdown Explanation: {ev.score_breakdown_explanation or '(none)'}",
                     f"- Reason: {_reason_text(item)}",
                     f"- Fix Suggestion: {_fix_suggestion_text(item)}",
                     f"- Error Category: {_error_category_text(item)}",
-                    f"- Language Policy Check: {_language_policy_check_text(item)}",
                     f"- Flags: {_format_flags(ev.flags)}",
+                    f"- Needs Human Review: {ev.needs_human_review}",
                 ]
             )
             if index != len(run_results) - 1:
@@ -231,12 +242,17 @@ def _build_conversation(run_results: list[RunResult], config: AppConfig | None =
                 f"- Open Method Used: {pair.open_method_used or '(none)'}",
                 f"- Status: {pair.status}",
                 f"- Extraction Rejected Reason: {_extraction_rejected_reason(item)}",
-                f"- Actual Answer: {pair.actual_answer or pair.answer or '(none)'}",
-                f"- Actual Answer Clean: {pair.actual_answer_clean or pair.actual_answer or pair.answer or '(none)'}",
-                f"- Raw Answer: {pair.raw_answer or pair.answer_raw or '(none)'}",
-                f"- Cleaned Answer: {pair.cleaned_answer or pair.actual_answer_clean or pair.actual_answer or pair.answer or '(none)'}",
+                f"- Final Answer: {_final_answer_text(item)}",
+                f"- Actual Answer: {pair.actual_answer or pair.final_answer or '(none)'}",
+                f"- Actual Answer Clean: {pair.actual_answer_clean or pair.actual_answer or pair.final_answer or '(none)'}",
+                f"- Raw Answer: {pair.debug_raw_answer or '(none)'}",
+                f"- Cleaned Answer: {pair.debug_cleaned_answer or '(none)'}",
                 f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
                 f"- Cleaning Applied: {_cleaning_applied_text(item)}",
+                f"- question_repetition_detected: {pair.question_repetition_detected}",
+                f"- truncated_detected: {pair.truncated_detected or pair.truncated_answer_detected}",
+                f"- carryover_detected: {pair.carryover_detected}",
+                f"- keyword_coverage_score: {pair.keyword_coverage_score:.2f}",
                 f"- Answer Raw: {pair.answer_raw or '(none)'}",
                 f"- Extraction Source: {pair.extraction_source}",
                 f"- Message History Clean: {pair.message_history_clean or '(none)'}",
@@ -300,9 +316,15 @@ def _build_conversation(run_results: list[RunResult], config: AppConfig | None =
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _build_summary(run_results: list[RunResult], config: AppConfig | None = None) -> str:
+def _build_summary(
+    run_results: list[RunResult],
+    config: AppConfig | None = None,
+    runtime_metadata: dict[str, str] | None = None,
+) -> str:
     total = len(run_results)
-    successes = sum(1 for item in run_results if item.pair.status == "success")
+    passed = sum(1 for item in run_results if item.pair.status == "passed")
+    retry_extractions = sum(1 for item in run_results if item.pair.status == "retry_extraction")
+    invalid_answers = sum(1 for item in run_results if item.pair.status == "invalid_answer")
     invalid_captures = sum(1 for item in run_results if item.pair.status == "invalid_capture")
     failures = sum(1 for item in run_results if item.pair.status == "failed")
     dom_successes = sum(1 for item in run_results if item.pair.extraction_source == "dom")
@@ -319,18 +341,24 @@ def _build_summary(run_results: list[RunResult], config: AppConfig | None = None
         "결과 확인 우선순위: `reports/latest_conversation.md` -> `reports/latest_results.json` -> `reports/latest_results.csv` -> `reports/summary.md`",
         "성공 케이스는 스크린샷이나 비디오 경로가 비어 있어도 정상이며, 실패 케이스에서만 최소 증거 캡처가 남을 수 있다.",
         "",
+    ]
+    lines.extend(_runtime_metadata_lines(runtime_metadata))
+    lines.extend([
+        "",
         "## 집계",
         "",
         f"- 총 케이스 수: {total}",
-        f"- 성공 수: {successes}",
-        f"- 실패 수: {failures}",
+        f"- passed 수: {passed}",
+        f"- retry_extraction 수: {retry_extractions}",
+        f"- invalid_answer 수: {invalid_answers}",
+        f"- failed 수: {failures}",
         f"- invalid_capture 수: {invalid_captures}",
         f"- DOM 추출 성공 수: {dom_successes}",
         f"- OCR fallback 사용 수: {ocr_used}",
         f"- baseline 이후 새 응답 감지 수: {new_response_detected}",
         f"- 평균 overall score: {avg_score:.2f}",
         f"- human review 필요 건수: {human_review}",
-    ]
+    ])
 
     lines.extend(["", "## 케이스 요약", ""])
     if not run_results:
@@ -344,18 +372,14 @@ def _build_summary(run_results: list[RunResult], config: AppConfig | None = None
                     f"### {pair.case_id}",
                     "",
                     f"- Question: {pair.question}",
-                    f"- Final Answer: {pair.answer or '(none)'}",
-                    f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
-                    f"- Cleaning Applied: {_cleaning_applied_text(item)}",
+                    f"- Final Answer: {_final_answer_text(item)}",
                     f"- Extraction Source: {pair.extraction_source}",
-                    f"- Evaluation Language: {evaluation.evaluation_language}",
                     f"- Score: {_score_text(item)}",
-                    f"- Score Breakdown: {_score_breakdown_text(item)}",
-                    f"- Score Breakdown Explanation: {evaluation.score_breakdown_explanation or '(none)'}",
                     f"- Reason: {_reason_text(item)}",
                     f"- Fix Suggestion: {_fix_suggestion_text(item)}",
                     f"- Flags: {_format_flags(evaluation.flags)}",
                     f"- Needs Human Review: {evaluation.needs_human_review}",
+                    f"- Error Category: {_error_category_text(item)}",
                     "",
                 ]
             )

@@ -56,7 +56,7 @@ def _make_pair(
         extraction_source=extraction_source,
         extraction_confidence=extraction_confidence,
         response_ms=1000,
-        status="success",
+        status="passed",
         raw_answer=answer,
         cleaned_answer=answer,
         answer_raw=answer,
@@ -244,7 +244,22 @@ def test_evaluation_prefers_cleaned_answer_over_raw_noise():
     assert result.overall_score >= 7.0
 
 
-def test_speculative_unverified_lowers_groundedness():
+def test_unknown_source_with_non_empty_answer_is_treated_as_low_confidence_invalid_state():
+    question = "갤럭시 버즈3 프로 ANC와 방수 알려줘"
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["ANC", "IP57"]),
+        _make_pair(
+            question=question,
+            answer="갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다.",
+            extraction_source="unknown",
+            extraction_confidence=0.8,
+        ),
+        _make_eval_result("ko"),
+    )
+    assert "low_confidence_extraction" in result.flags
+
+
+def test_s26_exact_specs_lower_groundedness_without_speculative_flag():
     question = "갤럭시 S26 울트라와 플러스 차이를 알려줘"
     answer = "S26 울트라는 200MP 카메라와 5000mAh 배터리, 6.9형 디스플레이를 제공합니다."
     result = _apply_quality_guardrails(
@@ -252,9 +267,79 @@ def test_speculative_unverified_lowers_groundedness():
         _make_pair(question=question, answer=answer),
         _make_eval_result("ko"),
     )
+    assert "speculative_unverified" not in result.flags
+    assert result.groundedness_score <= 0.5
+
+
+def test_s26_exact_specs_reduce_groundedness_without_speculative_flag_by_name_only():
+    question = "갤럭시 S26 울트라 핵심 사양 알려줘"
+    answer = "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리, 200MP 카메라를 제공합니다."
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["디스플레이", "배터리"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+    assert "speculative_unverified" not in result.flags
+    assert result.groundedness_score <= 0.5
+
+
+def test_existing_speculative_flag_is_removed_for_released_product_without_speculative_cues():
+    question = "갤럭시 링의 배터리 지속시간과 건강 센서 그리고 지원 기능을 알려주세요."
+    answer = "갤럭시 링은 최대 6~7일 사용 가능하고 심박 센서와 온도 센서를 지원합니다."
+    base = _make_eval_result("ko")
+    base = replace(base, flags=["speculative_unverified"])
+
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["갤럭시 링", "배터리", "센서"]),
+        _make_pair(question=question, answer=answer),
+        base,
+    )
+
+    assert "speculative_unverified" not in result.flags
+
+
+def test_existing_speculative_flag_is_kept_when_answer_uses_rumor_language():
+    question = "갤럭시 링의 배터리 지속시간과 건강 센서 그리고 지원 기능을 알려주세요."
+    answer = "갤럭시 링은 최대 7일로 예상되고, 정확한 센서 구성은 아직 미정입니다."
+    base = _make_eval_result("ko")
+    base = replace(base, flags=["speculative_unverified"])
+
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["갤럭시 링", "배터리", "센서"]),
+        _make_pair(question=question, answer=answer),
+        base,
+    )
+
     assert "speculative_unverified" in result.flags
-    assert result.groundedness_score <= 0.3
-    assert result.hallucination_risk == "high"
+
+
+def test_s26_sensitive_commerce_claim_still_triggers_speculative_flag():
+    question = "갤럭시 S26 울트라 가격과 재고 알려줘"
+    answer = "갤럭시 S26 울트라는 현재 구매 가능하며 1,699,000원이고 재고가 충분합니다."
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["가격", "재고"]),
+        _make_pair(question=question, answer=answer),
+        _make_eval_result("ko"),
+    )
+
+    assert "speculative_unverified" in result.flags
+
+
+def test_invalid_answer_status_keeps_human_review_and_negative_cap():
+    question = "갤럭시 버즈3 프로 ANC와 방수 알려줘"
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["ANC", "IP57"]),
+        replace(
+            _make_pair(question=question, answer="갤럭시 S26 울트라 디스플레이는 6.9형입니다."),
+            status="invalid_answer",
+            carryover_detected=True,
+            keyword_coverage_score=0.0,
+        ),
+        _make_eval_result("ko"),
+    )
+
+    assert result.needs_human_review is True
+    assert result.overall_score <= 2.5
 
 
 def test_truncated_and_promo_leak_flags_detected():

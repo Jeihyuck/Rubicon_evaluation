@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from app.dom_extractor import (
     _clean_answer_candidate_details,
+    _detect_topic_family,
+    _is_stale_or_invalid_candidate,
     _looks_truncated,
+    _strip_ui_noise,
     _strip_followup_cta,
     _strip_meta_text,
     _strip_promo_review_blocks,
@@ -64,6 +67,24 @@ class TestStaticUiFiltering:
         )
         assert _strip_meta_text(text) == "갤럭시 S24 배터리 교체는 삼성전자서비스 센터에서 진행할 수 있어요."
 
+    def test_accessibility_prefix_with_leading_punctuation_is_stripped_from_answer(self):
+        text = ", 자세한 내용을 보려면 Enter를 누르세요. 갤럭시 S26 울트라는 6.9형 디스플레이입니다."
+        assert _strip_meta_text(text) == "갤럭시 S26 울트라는 6.9형 디스플레이입니다."
+
+    def test_received_prefix_is_stripped_from_answer(self):
+        text = "에 수신됨, 자세한 내용을 보려면 Enter를 누르세요. 갤럭시 링은 최대 7일 사용 가능합니다."
+        assert _strip_meta_text(text) == "갤럭시 링은 최대 7일 사용 가능합니다."
+
+    def test_strip_ui_noise_reports_when_prefix_removed(self):
+        text = "에 수신됨, 자세한 내용을 보려면 Enter를 누르세요. 갤럭시 버즈3 프로는 ANC를 지원합니다."
+        cleaned, stripped = _strip_ui_noise(text)
+        assert cleaned == "갤럭시 버즈3 프로는 ANC를 지원합니다."
+        assert stripped is True
+
+    def test_loading_prefix_is_stripped_from_answer(self):
+        text = "답변 생성 중 갤럭시 링 정보를 확인하고 있어요. 갤럭시 링은 최대 7일 사용 가능합니다."
+        assert _strip_meta_text(text) == "갤럭시 링은 최대 7일 사용 가능합니다."
+
     def test_product_card_tail_is_stripped_from_answer(self):
         text = (
             "갤럭시 S24는 6.2형 디스플레이와 4,000mAh 배터리를 제공합니다. "
@@ -83,11 +104,61 @@ class TestStaticUiFiltering:
         assert cleaned == "무게는 1.69kg입니다."
         assert stripped is True
 
+    def test_strip_promo_review_blocks_trims_inline_price_benefit_tail(self):
+        text = (
+            "카메라와 화면 기준으로 보면 울트라가 더 강력합니다. "
+            "💰 지금 가격/혜택 흐름 S26 울트라: 즉시 할인 최대 6% "
+            "카드사 혜택/무이자 할부"
+        )
+        cleaned, stripped = _strip_promo_review_blocks(text, question="S26 울트라와 플러스 차이 알려줘")
+        assert cleaned == "카메라와 화면 기준으로 보면 울트라가 더 강력합니다."
+        assert stripped is True
+
+    def test_strip_promo_review_blocks_removes_product_card_lines(self):
+        text = (
+            "카메라와 화면 기준으로 보면 울트라가 더 강력합니다.\n"
+            "갤럭시 S26 울트라 자급제 (SM-S948NZVBKOO)\n"
+            "⭐ 4.9 (15101)\n"
+            "1,693,400원\n"
+            "104,000원 할인\n"
+            "더 알아보기"
+        )
+        cleaned, stripped = _strip_promo_review_blocks(text, question="S26 울트라와 플러스 차이 알려줘")
+        assert cleaned == "카메라와 화면 기준으로 보면 울트라가 더 강력합니다."
+        assert stripped is True
+
+    def test_strip_promo_review_blocks_trims_storage_option_tail(self):
+        text = (
+            "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다. "
+            "⚠️ 저장용량 옵션이 256GB / 512GB / 1TB로 나뉘니, 촬영이 잦으면 512GB 이상이 선택이 편해요."
+        )
+        cleaned, stripped = _strip_promo_review_blocks(text, question="갤럭시 S26 울트라 핵심 사양 알려줘")
+        assert cleaned == "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다."
+        assert stripped is True
+
+    def test_strip_promo_review_blocks_trims_advisory_tail(self):
+        text = (
+            "갤럭시 버즈3 프로는 ANC와 IP57 방수를 지원합니다. "
+            "다음 선택 포인트는 2가지예요. 통화 위주면 ANC 켠 통화 시간이 중요합니다."
+        )
+        cleaned, stripped = _strip_promo_review_blocks(text, question="갤럭시 버즈3 프로 방수와 ANC 알려줘")
+        assert cleaned == "갤럭시 버즈3 프로는 ANC와 IP57 방수를 지원합니다."
+        assert stripped is True
+
     def test_clean_answer_candidate_details_reports_cleaning_flags(self):
         text = "배터리 5000mAh입니다. 더 알아보기\n추천 질문: 카메라는 어떤가요?\nCS AI 챗봇에 문의해 주세요."
         details = _clean_answer_candidate_details(text, question="배터리 알려줘")
         assert details["cleaned_answer"] == "배터리 5000mAh입니다."
         assert details["cta_stripped"] is True
+
+    def test_clean_answer_candidate_details_marks_carryover_reject(self):
+        details = _clean_answer_candidate_details(
+            "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다.",
+            question="갤럭시 버즈3 프로 방수와 ANC 알려줘",
+            baseline_last_answer="갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다.",
+            baseline_topic_family="phone",
+        )
+        assert details["carryover_detected"] is True
 
     def test_clean_answer_candidate_details_detects_truncated_answer(self):
         details = _clean_answer_candidate_details("운동용으로도 매칭이 .", question="버즈3 프로 방수 알려줘")
@@ -96,6 +167,10 @@ class TestStaticUiFiltering:
 
     def test_looks_truncated_matches_requested_pattern(self):
         assert _looks_truncated("운동용으로도 매칭이 .") is True
+
+    def test_looks_truncated_matches_live_tail_patterns(self):
+        assert _looks_truncated("실사용으로") is True
+        assert _looks_truncated("이걸로 정리되면") is True
 
     def test_chat_history_dump_is_detected(self):
         text = (
@@ -206,6 +281,54 @@ class TestDiffHelpers:
 
         best = choose_best_answer_segment(segments, question=question)
         assert best == "갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다."
+
+    def test_choose_best_answer_segment_trims_price_and_promo_tail(self):
+        question = "갤럭시 S26 울트라와 갤럭시 S26 플러스의 차이를 비교해 주세요"
+        segments = [
+            (
+                "카메라·화면·S펜 기준으로 보면 울트라가 더 강력하고 플러스는 더 가볍습니다. "
+                "💰 지금 가격/혜택 흐름 S26 울트라: 즉시 할인 최대 6% 카드사 혜택/무이자 할부"
+            )
+        ]
+
+        best = choose_best_answer_segment(segments, question=question)
+        assert best == "카메라·화면·S펜 기준으로 보면 울트라가 더 강력하고 플러스는 더 가볍습니다."
+
+    def test_choose_best_answer_segment_trims_storage_and_advisory_tail(self):
+        question = "갤럭시 S26 울트라 핵심 사양 알려줘"
+        segments = [
+            (
+                "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다. "
+                "이 사양이면 이런 분들께 특히 잘 맞아요. 큰 화면으로 영상과 게임을 많이 보는 분. "
+                "⚠️ 저장용량 옵션이 256GB / 512GB / 1TB로 나뉘니 512GB 이상이 선택이 편해요."
+            )
+        ]
+
+        best = choose_best_answer_segment(segments, question=question)
+        assert best == "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다."
+
+
+class TestTopicFamilyDetection:
+    def test_detect_topic_family_prefers_earbuds_over_generic_galaxy_phone_tokens(self):
+        question = "갤럭시 버즈3 프로의 배터리 시간과 방수 등급 그리고 주요 오디오 기능을 알려주세요."
+
+        assert _detect_topic_family(question) == "earbuds"
+
+    def test_stale_phone_answer_is_rejected_for_earbuds_question(self):
+        question = "갤럭시 버즈3 프로의 배터리 시간과 방수 등급 그리고 주요 오디오 기능을 알려주세요."
+        baseline_answer = "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다."
+        carryover_answer = (
+            "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다. "
+            "200MP 카메라와 쿼드 카메라 구성이 특징입니다."
+        )
+
+        assert _is_stale_or_invalid_candidate(
+            question,
+            carryover_answer,
+            carryover_answer,
+            baseline_last_answer=baseline_answer,
+            baseline_topic_family="phone",
+        ) is True
 
 
 class TestMessageNodeExtraction:
@@ -328,7 +451,99 @@ class TestPostBaselineCandidates:
             payload = build_post_baseline_answer_candidates(DummyContext())
 
         assert payload["answer"] == "주문 배송 조회는 삼성닷컴 마이페이지에서 확인할 수 있습니다."
-        assert payload["strict_candidates"] == ["주문 배송 조회는 삼성닷컴 마이페이지에서 확인할 수 있습니다."]
+
+    def test_stale_carryover_contamination_is_rejected(self):
+        class DummyContext:
+            baseline_bot_count = 1
+            baseline_bot_messages = ["갤럭시 S26 울트라는 6.9형 디스플레이와 200MP 카메라를 제공합니다."]
+            baseline_message_nodes_snapshot = ["갤럭시 S26 울트라는 6.9형 디스플레이와 200MP 카메라를 제공합니다."]
+            baseline_visible_blocks = ["갤럭시 S26 울트라는 6.9형 디스플레이와 200MP 카메라를 제공합니다."]
+            baseline_last_answer = "갤럭시 S26 울트라는 6.9형 디스플레이와 200MP 카메라를 제공합니다."
+            baseline_topic_family = "phone"
+
+        from unittest.mock import patch
+
+        contaminated = (
+            "4월 13일 (월) 리치 텍스트 메시지 자세한 내용을 보려면 Enter를 누르세요 "
+            "갤럭시 S26 울트라는 6.9형 디스플레이와 200MP 카메라를 제공합니다."
+        )
+
+        with (
+            patch(
+                "app.dom_extractor.extract_structured_message_history",
+                return_value={
+                    "history": [contaminated],
+                    "count": 1,
+                    "fallback_diff_used": False,
+                },
+            ),
+            patch("app.dom_extractor.extract_bot_message_texts", return_value=[contaminated]),
+            patch("app.dom_extractor.diff_visible_text_against_baseline", return_value=[contaminated]),
+            patch("app.dom_extractor.extract_visible_chat_text", return_value=contaminated),
+            patch("app.dom_extractor.extract_visible_text_blocks", return_value=[contaminated]),
+        ):
+            payload = build_post_baseline_answer_candidates(DummyContext(), question="갤럭시 버즈3 프로 방수와 ANC 알려줘")
+
+        assert payload["answer"] == ""
+        assert payload["extraction_source"] == "unknown"
+        assert payload["carryover_detected"] is True
+
+    def test_truncated_candidate_is_not_accepted_as_success_answer(self):
+        class DummyContext:
+            baseline_bot_count = 1
+            baseline_bot_messages = ["이전 답변"]
+            baseline_message_nodes_snapshot = ["이전 답변"]
+            baseline_visible_blocks = ["이전 답변"]
+            baseline_last_answer = "이전 답변"
+            baseline_topic_family = "unknown"
+
+        from unittest.mock import patch
+
+        truncated = "색상은 블루 기준으로"
+
+        with (
+            patch(
+                "app.dom_extractor.extract_structured_message_history",
+                return_value={
+                    "history": [truncated],
+                    "count": 1,
+                    "fallback_diff_used": False,
+                },
+            ),
+            patch("app.dom_extractor.extract_bot_message_texts", return_value=[truncated]),
+            patch("app.dom_extractor.diff_visible_text_against_baseline", return_value=[truncated]),
+            patch("app.dom_extractor.extract_visible_chat_text", return_value=truncated),
+            patch("app.dom_extractor.extract_visible_text_blocks", return_value=[truncated]),
+        ):
+            payload = build_post_baseline_answer_candidates(DummyContext(), question="갤럭시 북5 프로 혜택 알려줘")
+
+        assert payload["answer"] == ""
+        assert payload["truncated_detected"] is True
+
+    def test_payload_exposes_keyword_coverage_for_selected_candidate(self):
+        class DummyContext:
+            baseline_bot_count = 0
+            baseline_bot_messages = []
+            baseline_message_nodes_snapshot = []
+            baseline_visible_blocks = []
+            baseline_last_answer = ""
+            baseline_topic_family = "unknown"
+
+        from unittest.mock import patch
+
+        answer = "갤럭시 버즈3 프로는 적응형 노이즈 캔슬링과 IP57 방수를 지원합니다."
+
+        with (
+            patch("app.dom_extractor.extract_structured_message_history", return_value={"history": [answer], "count": 1, "fallback_diff_used": False}),
+            patch("app.dom_extractor.extract_bot_message_texts", return_value=[answer]),
+            patch("app.dom_extractor.diff_visible_text_against_baseline", return_value=[answer]),
+            patch("app.dom_extractor.extract_visible_chat_text", return_value=answer),
+            patch("app.dom_extractor.extract_visible_text_blocks", return_value=[answer]),
+        ):
+            payload = build_post_baseline_answer_candidates(DummyContext(), question="갤럭시 버즈3 프로 ANC와 방수 알려줘")
+
+        assert payload["answer"] == answer
+        assert payload["keyword_coverage_score"] >= 0.34
 
     def test_answer_ignores_feedback_timestamp_meta(self):
         class DummyContext:
