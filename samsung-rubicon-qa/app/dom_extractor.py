@@ -1265,9 +1265,9 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
         )
         for segment in new_bot_by_count + new_bot_segments + new_history_segments + diff_segments
     ]
-    question_repetition_detected = any(item["question_repetition_detected"] for item in cleaned_candidates)
-    truncated_detected = any(item["truncated_detected"] for item in cleaned_candidates)
-    carryover_detected = any(item["carryover_detected"] for item in cleaned_candidates)
+    any_question_repetition_detected = any(item["question_repetition_detected"] for item in cleaned_candidates)
+    any_truncated_detected = any(item["truncated_detected"] for item in cleaned_candidates)
+    any_carryover_detected = any(item["carryover_detected"] for item in cleaned_candidates)
 
     strict_candidates = _ordered_unique_segments(
         _remove_question_echo_segments(
@@ -1314,6 +1314,18 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
             selected_source = "dom"
             selected_confidence = 0.72
 
+    selected_question_repetition_detected = bool(selected_candidate.get("question_repetition_detected", False))
+    selected_truncated_detected = bool(selected_candidate.get("truncated_detected", False))
+    selected_carryover_detected = bool(selected_candidate.get("carryover_detected", False))
+    if selected_candidate.get("cleaned_answer") or selected_candidate.get("raw_answer"):
+        question_repetition_detected = selected_question_repetition_detected
+        truncated_detected = selected_truncated_detected
+        carryover_detected = selected_carryover_detected
+    else:
+        question_repetition_detected = any_question_repetition_detected
+        truncated_detected = any_truncated_detected
+        carryover_detected = any_carryover_detected
+
     return {
         "answer": selected_candidate["cleaned_answer"],
         "raw_answer": selected_candidate["raw_answer"],
@@ -1322,11 +1334,11 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
         "extraction_source": selected_source,
         "extraction_confidence": selected_confidence,
         "question_repetition_detected": question_repetition_detected,
-        "truncated_detected": truncated_detected or selected_candidate["truncated_detected"],
+        "truncated_detected": truncated_detected,
         "ui_noise_stripped": any(item["ui_noise_stripped"] for item in cleaned_candidates) or bool(selected_candidate.get("ui_noise_stripped", False)),
         "cta_stripped": selected_candidate["cta_stripped"],
         "promo_stripped": selected_candidate["promo_stripped"],
-        "carryover_detected": carryover_detected or bool(selected_candidate.get("carryover_detected", False)),
+        "carryover_detected": carryover_detected,
         "keyword_coverage_score": float(selected_candidate.get("keyword_coverage_score", 0.0) or 0.0),
         "history": structured_history.get("history", []),
         "structured_message_history_count": structured_history.get("count", 0),

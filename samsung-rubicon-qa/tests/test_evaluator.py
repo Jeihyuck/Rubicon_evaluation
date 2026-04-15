@@ -342,6 +342,50 @@ def test_invalid_answer_status_keeps_human_review_and_negative_cap():
     assert result.overall_score <= 2.5
 
 
+def test_substantive_aligned_answer_is_not_hard_failed_by_stale_dom_flags_alone():
+    question = "갤럭시 북5 프로 360의 무게와 배터리 그리고 포트 구성을 알려주세요."
+    answer = (
+        "갤럭시 북5 프로 360은 16형 기준 무게 1.69kg, 76.1Wh 배터리, HDMI 2.1과 Thunderbolt 4 포트를 제공합니다. "
+        "외부 모니터와 저장장치를 자주 연결할 때 편합니다."
+    )
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["무게", "배터리", "포트"]),
+        replace(
+            _make_pair(question=question, answer=answer),
+            status="invalid_answer",
+            question_repetition_detected=True,
+            carryover_detected=True,
+            keyword_coverage_score=0.67,
+        ),
+        _make_eval_result("ko"),
+    )
+
+    assert "question_repetition" not in result.flags
+    assert "off_topic_or_carryover" not in result.flags
+    assert result.overall_score >= 7.0
+
+
+def test_released_product_wording_is_sanitized_in_reason_and_fix():
+    question = "갤럭시 S26 울트라 핵심 사양 알려줘"
+    answer = "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리를 제공합니다."
+    base = _make_eval_result("ko")
+    base = replace(
+        base,
+        reason="미공개로 보이는 갤럭시 S26 울트라에 대해 근거 없이 설명합니다.",
+        fix_suggestion="미발표 제품(S26 울트라)이므로 공식 공개 전까지 안내하지 마세요.",
+        flags=[],
+    )
+
+    result = _apply_quality_guardrails(
+        _make_test_case(question=question, expected_keywords=["디스플레이", "배터리"]),
+        _make_pair(question=question, answer=answer),
+        base,
+    )
+
+    assert "미공개" not in result.reason
+    assert "미발표 제품" not in result.fix_suggestion
+
+
 def test_truncated_and_promo_leak_flags_detected():
     question = "오디세이 OLED G8 비교"
     answer = "오디세이 OLED G8은 32형 240Hz입니다. 현재 판매가 1,299,000원:"

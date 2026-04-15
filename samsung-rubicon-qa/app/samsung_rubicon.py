@@ -264,7 +264,7 @@ HISTORY_ALWAYS_DROP_HINTS = [
 ]
 
 MIN_MAIN_ANSWER_LEN = 40
-MIN_KEYWORD_COVERAGE_SCORE = 0.34
+MIN_KEYWORD_COVERAGE_SCORE = 0.30
 MEANINGFUL_ANSWER_HINTS = [
     "죄송",
     "문의",
@@ -2703,7 +2703,12 @@ def _looks_like_main_answer_shape(text: str) -> bool:
     return True
 
 
-def _clean_bot_answer_candidate_details(text: str) -> dict[str, Any]:
+def _clean_bot_answer_candidate_details(
+    text: str,
+    question: str = "",
+    baseline_last_answer: str = "",
+    baseline_topic_family: str = "unknown",
+) -> dict[str, Any]:
     text_n = _strip_answer_meta_prefixes(text)
     runtime = _RUNTIME
     if runtime is not None:
@@ -2718,7 +2723,12 @@ def _clean_bot_answer_candidate_details(text: str) -> dict[str, Any]:
             "truncated_detected": False,
             "question_repetition_detected": False,
         }
-    dom_details = _dom_clean_answer_candidate_details(text_n)
+    dom_details = _dom_clean_answer_candidate_details(
+        text_n,
+        question=question,
+        baseline_last_answer=baseline_last_answer,
+        baseline_topic_family=baseline_topic_family,
+    )
     stripped = dom_details["cleaned_answer"]
     noise_lines_removed = 0
     for line in text_n.splitlines():

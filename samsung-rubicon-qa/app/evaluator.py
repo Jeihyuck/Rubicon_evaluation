@@ -446,6 +446,29 @@ def _question_keywords_missing(question: str, answer: str) -> bool:
     return hits <= 1
 
 
+def _has_substantive_alignment(
+    question: str,
+    answer: str,
+    expected_keywords: list[str],
+    keyword_coverage: float | None = None,
+) -> bool:
+    normalized_answer = _normalize_answer_text(answer)
+    if len(normalized_answer) < 40:
+        return False
+    if _contains_question_repetition(question, normalized_answer):
+        return False
+
+    question_family = _detect_topic_family(question)
+    answer_family = _detect_topic_family(normalized_answer)
+    if question_family != "unknown" and answer_family != "unknown" and question_family != answer_family:
+        return False
+
+    coverage = keyword_coverage if keyword_coverage is not None else _keyword_coverage(question, normalized_answer, expected_keywords)
+    has_core_keyword_hits = not _question_keywords_missing(question, normalized_answer)
+    has_sentence_shape = any(marker in normalized_answer for marker in ("다.", "요.", "니다.", ". ", ":"))
+    return coverage >= 0.34 and (has_core_keyword_hits or has_sentence_shape)
+
+
 def _looks_speculative_unverified(question: str, answer: str) -> bool:
     lowered_question = _normalize_answer_text(question).lower()
     lowered_answer = _normalize_answer_text(answer).lower()
@@ -474,13 +497,16 @@ def _sanitize_released_override_text(text: str, question: str, answer: str) -> s
     if not (_contains_released_override(question) or _contains_released_override(answer)):
         return normalized
 
-    replacements = {
-        "공개되지 않은 제품": "공식 근거가 확인되지 않은 세부 정보",
-        "미공개 제품": "공식 근거가 확인되지 않은 세부 정보",
-        "아직 미공개": "아직 공식 근거가 확인되지 않음",
-    }
-    for old, new in replacements.items():
-        normalized = normalized.replace(old, new)
+    replacements = [
+        (r"공개되지 않은 제품", "공식 근거가 확인되지 않은 세부 정보"),
+        (r"미공개(?:로 보이는)? 제품", "공식 근거가 확인되지 않은 세부 정보"),
+        (r"미발표(?:된)? 제품", "공식 근거가 확인되지 않은 세부 정보"),
+        (r"아직 미공개", "아직 공식 근거가 확인되지 않음"),
+        (r"미공개로 보이는", "공식 근거가 충분히 제시되지 않은"),
+        (r"미발표 제품\(([^)]*)\)", r"공식 근거가 충분하지 않은 정보(\1)"),
+    ]
+    for pattern, replacement in replacements:
+        normalized = re.sub(pattern, replacement, normalized)
     return normalized
 
 
@@ -865,6 +891,12 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     completeness_score = result.completeness_score
     clarity_score = result.clarity_score
     groundedness_score = result.groundedness_score
+    substantive_alignment = _has_substantive_alignment(
+        test_case.question,
+        normalized_answer,
+        test_case.expected_keywords,
+        keyword_coverage=keyword_coverage,
+    )
 
     if len(normalized_answer) < 40:
         _append_flag(flags, "too_short")
@@ -874,9 +906,9 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         lowered_answer = normalized_answer.lower()
         if not any(keyword.lower() in lowered_answer for keyword in test_case.expected_keywords):
             _append_flag(flags, "weak_keyword_alignment")
-    if getattr(pair, "question_repetition_detected", False):
+    if getattr(pair, "question_repetition_detected", False) and not substantive_alignment:
         _append_flag(flags, "question_repetition")
-    if getattr(pair, "carryover_detected", False):
+    if getattr(pair, "carryover_detected", False) and not substantive_alignment:
         _append_flag(flags, "off_topic_or_carryover")
     if pair.extraction_source == "unknown" or pair.extraction_confidence < 0.45:
         _append_flag(flags, "low_confidence_extraction")
@@ -884,7 +916,7 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         _append_flag(flags, "truncated_answer")
     if _contains_promo_or_product_card_text(normalized_answer):
         _append_flag(flags, "promo_or_product_card_leak")
-    if _contains_question_repetition(test_case.question, normalized_answer):
+    if _contains_question_repetition(test_case.question, normalized_answer) and not substantive_alignment:
         _append_flag(flags, "question_repetition")
     if _looks_speculative_unverified(test_case.question, normalized_answer):
         _append_flag(flags, "speculative_unverified")
@@ -938,12 +970,17 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     if "too_short" in flags:
         completeness_score = min(completeness_score, 0.3)
 
+    hard_invalid_flags = {"question_repetition", "off_topic_or_carryover", "truncated_answer"}
+    has_hard_invalid_signal = any(flag in flags for flag in hard_invalid_flags)
+
     if pair.status in {"retry_extraction", "invalid_answer"}:
         needs_human_review = True
-        if pair.status == "invalid_answer":
+        if pair.status == "invalid_answer" and has_hard_invalid_signal:
             overall_cap = 2.5
-        else:
+        elif pair.status == "retry_extraction" and has_hard_invalid_signal:
             overall_cap = 4.5
+        else:
+            overall_cap = 10.0
     else:
         needs_human_review = result.needs_human_review or bool(flags)
         overall_cap = 10.0

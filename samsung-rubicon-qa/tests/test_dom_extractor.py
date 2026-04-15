@@ -670,6 +670,36 @@ class TestPostBaselineCandidates:
         assert payload["answer"] == ""
         assert payload["strict_candidates"] == []
 
+    def test_post_baseline_candidates_use_selected_candidate_flags_not_any_candidate_flags(self):
+        class DummyContext:
+            baseline_bot_count = 0
+            baseline_bot_messages = []
+            baseline_message_nodes_snapshot = []
+            baseline_visible_blocks = []
+            baseline_last_answer = ""
+            baseline_topic_family = "unknown"
+
+        from unittest.mock import patch
+
+        question = "갤럭시 버즈3 프로 방수와 ANC 알려줘"
+        selected_answer = "갤럭시 버즈3 프로는 IP57 방수와 적응형 노이즈 캔슬링을 지원합니다."
+
+        with (
+            patch(
+                "app.dom_extractor.extract_structured_message_history",
+                return_value={"history": [question, selected_answer], "count": 2, "fallback_diff_used": False},
+            ),
+            patch("app.dom_extractor.extract_bot_message_texts", return_value=[question, selected_answer]),
+            patch("app.dom_extractor.diff_visible_text_against_baseline", return_value=[question, selected_answer]),
+            patch("app.dom_extractor.extract_visible_chat_text", return_value=f"{question}\n{selected_answer}"),
+            patch("app.dom_extractor.extract_visible_text_blocks", return_value=[question, selected_answer]),
+        ):
+            payload = build_post_baseline_answer_candidates(DummyContext(), question=question)
+
+        assert payload["answer"] == selected_answer
+        assert payload["question_repetition_detected"] is False
+        assert payload["carryover_detected"] is False
+
     def test_post_baseline_candidates_flag_truncated_cleaned_answer(self):
         class DummyContext:
             baseline_bot_count = 0
