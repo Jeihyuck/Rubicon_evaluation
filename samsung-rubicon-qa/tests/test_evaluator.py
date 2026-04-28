@@ -192,7 +192,7 @@ def test_off_topic_carryover_gets_severe_penalty():
     test_case = _make_test_case(question="세탁기 용량 알려줘", expected_keywords=["세탁기"])
     pair = _make_pair(question="세탁기 용량 알려줘", answer="갤럭시 S26 울트라 카메라와 화면 차이를 안내드릴게요")
     result = _apply_quality_guardrails(test_case, pair, _make_eval_result("ko"))
-    assert "off_topic_or_carryover" in result.flags
+    assert "topic_mismatch" in result.flags
     assert result.overall_score <= 1.5
     assert result.needs_human_review is True
 
@@ -208,8 +208,9 @@ def test_related_answer_with_promo_noise_is_not_marked_off_topic():
         _make_pair(question=question, answer=answer),
         _make_eval_result("ko"),
     )
-    assert "off_topic_or_carryover" not in result.flags
-    assert "promo_or_product_card_leak" in result.flags
+    assert "carryover_contamination" not in result.flags
+    assert "topic_mismatch" not in result.flags
+    assert "promo_or_review_leak" in result.flags
 
 
 def test_s26_released_name_alone_does_not_trigger_speculative_flag():
@@ -259,7 +260,7 @@ def test_unknown_source_with_non_empty_answer_is_treated_as_low_confidence_inval
     assert "low_confidence_extraction" in result.flags
 
 
-def test_s26_exact_specs_lower_groundedness_without_speculative_flag():
+def test_s26_exact_specs_trigger_speculative_flag():
     question = "갤럭시 S26 울트라와 플러스 차이를 알려줘"
     answer = "S26 울트라는 200MP 카메라와 5000mAh 배터리, 6.9형 디스플레이를 제공합니다."
     result = _apply_quality_guardrails(
@@ -267,11 +268,11 @@ def test_s26_exact_specs_lower_groundedness_without_speculative_flag():
         _make_pair(question=question, answer=answer),
         _make_eval_result("ko"),
     )
-    assert "speculative_unverified" not in result.flags
+    assert "speculative_unverified" in result.flags
     assert result.groundedness_score <= 0.5
 
 
-def test_s26_exact_specs_reduce_groundedness_without_speculative_flag_by_name_only():
+def test_s26_exact_specs_by_name_only_trigger_speculative_flag():
     question = "갤럭시 S26 울트라 핵심 사양 알려줘"
     answer = "갤럭시 S26 울트라는 6.9형 디스플레이와 5,000mAh 배터리, 200MP 카메라를 제공합니다."
     result = _apply_quality_guardrails(
@@ -279,7 +280,7 @@ def test_s26_exact_specs_reduce_groundedness_without_speculative_flag_by_name_on
         _make_pair(question=question, answer=answer),
         _make_eval_result("ko"),
     )
-    assert "speculative_unverified" not in result.flags
+    assert "speculative_unverified" in result.flags
     assert result.groundedness_score <= 0.5
 
 
@@ -342,6 +343,35 @@ def test_invalid_answer_status_keeps_human_review_and_negative_cap():
     assert result.overall_score <= 2.5
 
 
+def test_evaluate_pair_uses_failed_answer_fallback_when_response_detected_but_answer_missing():
+    logger = MagicMock()
+    pair = replace(
+        _make_pair(question="갤럭시 버즈3 프로 ANC와 방수 알려줘", answer=""),
+        status="invalid_answer",
+        answer="",
+        raw_answer="",
+        cleaned_answer="",
+        answer_raw="",
+        answer_normalized="",
+        actual_answer="",
+        actual_answer_clean="",
+        new_bot_response_detected=True,
+        input_verified=True,
+        submit_effect_verified=True,
+    )
+
+    result = evaluate_pair(
+        _make_config(api_key="test-key"),
+        _make_test_case(question="갤럭시 버즈3 프로 ANC와 방수 알려줘", expected_keywords=["ANC", "IP57"]),
+        pair,
+        logger,
+        target_language="ko",
+    )
+
+    assert result.flags == []
+    assert result.reason == "유효한 답변을 추출하기 전에 실행이 중단되었습니다."
+
+
 def test_substantive_aligned_answer_is_not_hard_failed_by_stale_dom_flags_alone():
     question = "갤럭시 북5 프로 360의 무게와 배터리 그리고 포트 구성을 알려주세요."
     answer = (
@@ -395,7 +425,7 @@ def test_truncated_and_promo_leak_flags_detected():
         _make_eval_result("ko"),
     )
     assert "truncated_answer" in result.flags
-    assert "promo_or_product_card_leak" in result.flags
+    assert "promo_or_review_leak" in result.flags
 
 
 def test_korean_question_forces_korean_evaluation_text():

@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 
 from app.models import TestCase
+from app.scenario_tags import enrich_test_case_metadata
 
 
 def _parse_keywords(raw: str) -> list[str]:
@@ -28,7 +29,7 @@ def load_test_cases(
             if selected and case_id not in selected:
                 continue
             cases.append(
-                TestCase(
+                enrich_test_case_metadata(TestCase(
                     id=case_id,
                     category=row["category"].strip(),
                     locale=row.get("locale", "ko-KR").strip() or "ko-KR",
@@ -36,7 +37,7 @@ def load_test_cases(
                     question=row["question"].strip(),
                     expected_keywords=_parse_keywords(row.get("expected_keywords", "")),
                     forbidden_keywords=_parse_keywords(row.get("forbidden_keywords", "")),
-                )
+                ))
             )
 
     if max_questions is None or max_questions <= 0:

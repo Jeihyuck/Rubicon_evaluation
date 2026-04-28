@@ -10,6 +10,7 @@ from app.config import AppConfig
 from app.logger import create_logger
 from app.samsung_rubicon import (
     _select_report_answer,
+    _should_retry_case_after_answer_failure,
     _classify_input_candidate_metadata,
     _detect_login_gate,
     _input_is_editable,
@@ -17,6 +18,7 @@ from app.samsung_rubicon import (
     _score_input_candidate_metadata,
     configure_runtime,
     enter_question_with_verification,
+    ensure_clean_conversation,
     submit_question,
     wait_for_answer_completion,
     wait_for_new_bot_response,
@@ -87,6 +89,22 @@ class _FakeLocator:
         if "const disabled" in expression:
             return self.editable
         return None
+
+
+class _FakePage:
+    def __init__(self, raise_on_evaluate: bool = False):
+        self.raise_on_evaluate = raise_on_evaluate
+        self.evaluate_calls: list[str] = []
+        self.wait_calls: list[int] = []
+
+    def evaluate(self, expression: str):
+        self.evaluate_calls.append(expression)
+        if self.raise_on_evaluate:
+            raise RuntimeError("sdk unavailable")
+        return None
+
+    def wait_for_timeout(self, timeout_ms: int) -> None:
+        self.wait_calls.append(timeout_ms)
 
 
 def _make_config() -> AppConfig:
@@ -194,6 +212,45 @@ def test_status_maps_login_required_to_failed():
     assert _status_from_failure_category("login_required") == "failed"
 
 
+def test_retry_case_after_empty_invalid_answer_once():
+    assert _should_retry_case_after_answer_failure(
+        retry_attempt=1,
+        input_verified=True,
+        submit_effect_verified=True,
+        user_message_echo_verified=True,
+        status="invalid_answer",
+        input_failure_category="invalid_answer",
+        answer_raw="",
+        needs_retry_extraction=True,
+    ) is True
+
+
+def test_do_not_retry_case_after_second_attempt():
+    assert _should_retry_case_after_answer_failure(
+        retry_attempt=2,
+        input_verified=True,
+        submit_effect_verified=True,
+        user_message_echo_verified=True,
+        status="invalid_answer",
+        input_failure_category="invalid_answer",
+        answer_raw="",
+        needs_retry_extraction=True,
+    ) is False
+
+
+def test_do_not_retry_when_answer_exists():
+    assert _should_retry_case_after_answer_failure(
+        retry_attempt=1,
+        input_verified=True,
+        submit_effect_verified=True,
+        user_message_echo_verified=True,
+        status="invalid_answer",
+        input_failure_category="invalid_answer",
+        answer_raw="실제 답변",
+        needs_retry_extraction=True,
+    ) is False
+
+
 def test_submit_question_uses_ready_signal_candidate_with_focus_proxy(tmp_path):
     configure_runtime(_make_config(), create_logger(tmp_path / "runtime-3.log"))
     wrapper = _FakeLocator(editable=False, value="")
@@ -263,6 +320,46 @@ def test_submit_question_uses_ready_signal_candidate_with_focus_proxy(tmp_path):
     assert evidence.input_method_used == "fill"
     assert evidence.input_selector == ".ql-editor"
     assert evidence.user_message_echo_verified is True
+
+
+def test_ensure_clean_conversation_falls_back_to_menu_when_sdk_fails(tmp_path):
+    configure_runtime(_make_config(), create_logger(tmp_path / "runtime-clean-1.log"))
+    page = _FakePage(raise_on_evaluate=True)
+    dirty_context = SimpleNamespace(scope=object(), scope_name="spr-chat__box-frame")
+    clean_context = SimpleNamespace(scope=object(), scope_name="spr-chat__box-frame")
+
+    with (
+        patch("app.samsung_rubicon._has_stale_conversation_messages", side_effect=[(True, ["old message"]), (False, [])]),
+        patch("app.samsung_rubicon._end_conversation_via_menu", return_value=True) as menu_reset,
+        patch("app.samsung_rubicon.open_chat_widget_or_conversation", return_value={"open_ok": True}),
+        patch("app.samsung_rubicon.resolve_chat_context", return_value=clean_context),
+    ):
+        result = ensure_clean_conversation(page, dirty_context)
+
+    assert result is clean_context
+    assert menu_reset.called is True
+
+
+def test_ensure_clean_conversation_uses_menu_when_sdk_reset_stays_dirty(tmp_path):
+    configure_runtime(_make_config(), create_logger(tmp_path / "runtime-clean-2.log"))
+    page = _FakePage(raise_on_evaluate=False)
+    dirty_context = SimpleNamespace(scope=object(), scope_name="spr-chat__box-frame")
+    still_dirty_context = SimpleNamespace(scope=object(), scope_name="spr-chat__box-frame")
+    clean_context = SimpleNamespace(scope=object(), scope_name="spr-chat__box-frame")
+
+    with (
+        patch(
+            "app.samsung_rubicon._has_stale_conversation_messages",
+            side_effect=[(True, ["old message"]), (True, ["still old"]), (False, [])],
+        ),
+        patch("app.samsung_rubicon._end_conversation_via_menu", return_value=True) as menu_reset,
+        patch("app.samsung_rubicon.open_chat_widget_or_conversation", return_value={"open_ok": True}),
+        patch("app.samsung_rubicon.resolve_chat_context", side_effect=[still_dirty_context, clean_context]),
+    ):
+        result = ensure_clean_conversation(page, dirty_context)
+
+    assert result is clean_context
+    assert menu_reset.call_count == 1
 
 
 def test_submit_question_stops_early_when_login_required(tmp_path):
@@ -408,6 +505,48 @@ def test_wait_for_answer_completion_uses_fast_exit_for_meaningful_stable_answer(
     with (
         patch("app.samsung_rubicon.build_post_baseline_answer_candidates", side_effect=[candidate_payload, candidate_payload]),
         patch("app.samsung_rubicon._loading_visible", return_value=False),
+    ):
+        result = wait_for_answer_completion(context, question="배터리 교체는 어디서 하나요?")
+
+    assert result.new_bot_response_detected is True
+    assert "삼성전자서비스 센터" in result.answer
+
+
+def test_wait_for_answer_completion_recovers_last_bot_message_after_timeout(tmp_path):
+    configure_runtime(_make_config(), create_logger(tmp_path / "runtime-timeout-recovery.log"))
+
+    class _Scope:
+        def wait_for_timeout(self, _: int) -> None:
+            return None
+
+    context = SimpleNamespace(
+        scope=_Scope(),
+        baseline_bot_count=0,
+        baseline_bot_messages=[],
+        baseline_last_answer="",
+        baseline_topic_family="unknown",
+    )
+    candidate_payload = {
+        "current_bot_count": 1,
+        "bot_count_increased": True,
+        "new_bot_segments": [],
+        "diff_segments": [],
+        "strict_candidates": [],
+        "fallback_candidates": [],
+        "answer": "",
+    }
+    recovered_payload = {
+        "actual_answer": "배터리 교체는 가까운 삼성전자서비스 센터에서 접수 후 진행할 수 있습니다.",
+        "actual_answer_clean": "배터리 교체는 가까운 삼성전자서비스 센터에서 접수 후 진행할 수 있습니다.",
+        "answer_raw": "배터리 교체는 가까운 삼성전자서비스 센터에서 접수 후 진행할 수 있습니다.",
+        "extraction_source": "dom_main_answer",
+    }
+
+    with (
+        patch("app.samsung_rubicon._answer_wait_settings", return_value=(0.01, 1, 0.01)),
+        patch("app.samsung_rubicon.build_post_baseline_answer_candidates", return_value=candidate_payload),
+        patch("app.samsung_rubicon.extract_last_answer", return_value=recovered_payload),
+        patch("app.samsung_rubicon.time.perf_counter", side_effect=[0.0, 0.0, 0.02, 0.03]),
     ):
         result = wait_for_answer_completion(context, question="배터리 교체는 어디서 하나요?")
 

@@ -7,7 +7,7 @@ from statistics import mean
 from typing import Any
 
 from app.config import AppConfig
-from app.models import RunResult
+from app.models import HarnessSummary, RunResult
 from app.utils import write_json
 
 
@@ -15,6 +15,7 @@ def write_reports(
     config: AppConfig,
     run_results: list[RunResult],
     runtime_metadata: dict[str, str] | None = None,
+    harness_summary: HarnessSummary | None = None,
 ) -> dict[str, str]:
     """Write the latest JSON, CSV, Markdown summary, and conversation report files."""
 
@@ -33,7 +34,10 @@ def write_reports(
         writer.writeheader()
         writer.writerows(flat_rows)
 
-    summary_path.write_text(_build_summary(run_results, config, runtime_metadata=runtime_metadata), encoding="utf-8")
+    summary_path.write_text(
+        _build_summary(run_results, config, runtime_metadata=runtime_metadata, harness_summary=harness_summary),
+        encoding="utf-8",
+    )
     _write_latest_conversation(run_results, conversation_path, config, runtime_metadata=runtime_metadata)
     return {
         "json": str(json_path),
@@ -47,8 +51,8 @@ def _write_latest_conversation(results: list[RunResult], path, config: AppConfig
     path.write_text(_build_conversation(results, config, runtime_metadata=runtime_metadata), encoding="utf-8")
 
 
-def _show_detailed_case(item: RunResult) -> bool:
-    return item.pair.status != "passed" or item.pair.run_mode == "debug"
+def _show_detailed_case(item: RunResult, config: AppConfig | None = None) -> bool:
+    return item.pair.status != "passed" or item.pair.run_mode == "debug" or bool(getattr(config, "report_debug_fields_on_success", False))
 
 
 def _format_flags(flags: list[str]) -> str:
@@ -82,6 +86,12 @@ def _error_category_text(result: RunResult) -> str:
     return str(result.to_result_record().get("error_category", "(none)"))
 
 
+def _primary_error_text(result: RunResult) -> str:
+    if result.pair.primary_error_category and result.pair.primary_error_category != "(none)":
+        return result.pair.primary_error_category
+    return _error_category_text(result)
+
+
 def _language_policy_check_text(result: RunResult) -> str:
     return str(result.to_result_record().get("language_policy_check", "pass"))
 
@@ -109,6 +119,7 @@ def _runtime_metadata_lines(runtime_metadata: dict[str, str] | None) -> list[str
         f"- Commit SHA: {runtime_metadata.get('commit_sha', 'unknown')}",
         f"- Extractor Version: {runtime_metadata.get('extractor_version', 'unknown')}",
         f"- Evaluator Version: {runtime_metadata.get('evaluator_version', 'unknown')}",
+        f"- Harness Version: {runtime_metadata.get('harness_version', 'unknown')}",
         f"- Run Mode: {runtime_metadata.get('run_mode', 'unknown')}",
     ]
 
@@ -125,6 +136,14 @@ def format_case_console_block(result: RunResult) -> str:
     pair = result.pair
     evaluation = result.evaluation
     lines = ["=" * 50, f"CASE: {pair.case_id}", f"QUESTION: {pair.question}", f"STATUS: {pair.status}"]
+    lines.extend(
+        [
+            f"RUN STATUS: {pair.run_status}",
+            f"EXTRACTION STATUS: {pair.extraction_status}",
+            f"ACCEPTANCE STATUS: {pair.acceptance_status}",
+            f"QUALITY STATUS: {pair.quality_status}",
+        ]
+    )
 
     if pair.status == "passed":
         lines.extend(
@@ -134,7 +153,7 @@ def format_case_console_block(result: RunResult) -> str:
                 f"SCORE: {_score_text(result)}",
                 f"REASON: {_reason_text(result)}",
                 f"FIX SUGGESTION: {_fix_suggestion_text(result)}",
-                f"ERROR CATEGORY: {_error_category_text(result)}",
+                f"PRIMARY ERROR CATEGORY: {_primary_error_text(result)}",
                 f"FLAGS: {'|'.join(evaluation.flags) if evaluation.flags else '(none)'}",
                 f"NEEDS HUMAN REVIEW: {evaluation.needs_human_review}",
             ]
@@ -153,6 +172,7 @@ def format_case_console_block(result: RunResult) -> str:
                 f"SCORE BREAKDOWN EXPLANATION: {evaluation.score_breakdown_explanation or '(none)'}",
                 f"REASON: {_reason_text(result)}",
                 f"FIX SUGGESTION: {_fix_suggestion_text(result)}",
+                f"PRIMARY ERROR CATEGORY: {pair.primary_error_category or _error_category_text(result)}",
                 f"FLAGS: {'|'.join(evaluation.flags) if evaluation.flags else '(none)'}",
             ]
         )
@@ -181,7 +201,7 @@ def _build_conversation(
         ev = item.evaluation
         heading_suffix = f" ({pair.case_id})"
 
-        if not _show_detailed_case(item):
+        if not _show_detailed_case(item, config):
             if index != 0:
                 lines.append("")
             lines.extend(
@@ -191,10 +211,15 @@ def _build_conversation(
                     f"- Question: {pair.question}",
                     f"- Final Answer: {_final_answer_text(item)}",
                     f"- Extraction Source: {pair.extraction_source}",
+                    f"- Run Status: {pair.run_status}",
+                    f"- Extraction Status: {pair.extraction_status}",
+                    f"- Acceptance Status: {pair.acceptance_status}",
+                    f"- Quality Status: {pair.quality_status}",
                     f"- Score: {_score_text(item)}",
                     f"- Reason: {_reason_text(item)}",
                     f"- Fix Suggestion: {_fix_suggestion_text(item)}",
-                    f"- Error Category: {_error_category_text(item)}",
+                    f"- Primary Error Category: {_primary_error_text(item)}",
+                    f"- Error Category: {_primary_error_text(item)}",
                     f"- Flags: {_format_flags(ev.flags)}",
                     f"- Needs Human Review: {ev.needs_human_review}",
                 ]
@@ -241,6 +266,10 @@ def _build_conversation(
                 f"- Availability Status: {pair.availability_status or 'unknown'}",
                 f"- Open Method Used: {pair.open_method_used or '(none)'}",
                 f"- Status: {pair.status}",
+                f"- Run Status: {pair.run_status}",
+                f"- Extraction Status: {pair.extraction_status}",
+                f"- Acceptance Status: {pair.acceptance_status}",
+                f"- Quality Status: {pair.quality_status}",
                 f"- Extraction Rejected Reason: {_extraction_rejected_reason(item)}",
                 f"- Final Answer: {_final_answer_text(item)}",
                 f"- Actual Answer: {pair.actual_answer or pair.final_answer or '(none)'}",
@@ -249,9 +278,12 @@ def _build_conversation(
                 f"- Cleaned Answer: {pair.debug_cleaned_answer or '(none)'}",
                 f"- Raw/Clean Diff: {_raw_clean_diff_text(item)}",
                 f"- Cleaning Applied: {_cleaning_applied_text(item)}",
+                f"- Candidate Count: {pair.candidate_count}",
+                f"- Selected Candidate Rank: {pair.selected_candidate_rank}",
                 f"- question_repetition_detected: {pair.question_repetition_detected}",
                 f"- truncated_detected: {pair.truncated_detected or pair.truncated_answer_detected}",
                 f"- carryover_detected: {pair.carryover_detected}",
+                f"- stale_answer_detected: {pair.stale_answer_detected}",
                 f"- keyword_coverage_score: {pair.keyword_coverage_score:.2f}",
                 f"- Answer Raw: {pair.answer_raw or '(none)'}",
                 f"- Extraction Source: {pair.extraction_source}",
@@ -262,7 +294,8 @@ def _build_conversation(
                 f"- Score Breakdown Explanation: {ev.score_breakdown_explanation or '(none)'}",
                 f"- Reason: {_reason_text(item)}",
                 f"- Fix Suggestion: {_fix_suggestion_text(item)}",
-                f"- Error Category: {_error_category_text(item)}",
+                f"- Primary Error Category: {_primary_error_text(item)}",
+                f"- Error Category: {_primary_error_text(item)}",
                 f"- Language Policy Check: {_language_policy_check_text(item)}",
                 f"- Flags: {_format_flags(ev.flags)}",
                 f"- Needs Human Review: {ev.needs_human_review}",
@@ -320,6 +353,7 @@ def _build_summary(
     run_results: list[RunResult],
     config: AppConfig | None = None,
     runtime_metadata: dict[str, str] | None = None,
+    harness_summary: HarnessSummary | None = None,
 ) -> str:
     total = len(run_results)
     passed = sum(1 for item in run_results if item.pair.status == "passed")
@@ -334,6 +368,7 @@ def _build_summary(
     avg_score = mean(item.evaluation.overall_score for item in run_results) if run_results else 0.0
     lowest = min(run_results, key=lambda item: item.evaluation.overall_score, default=None)
     error_cases = [item for item in run_results if item.pair.error_message]
+    harness_summary = harness_summary or HarnessSummary(total_cases=total)
 
     lines = [
         "# Samsung Rubicon QA Summary",
@@ -358,7 +393,25 @@ def _build_summary(
         f"- baseline 이후 새 응답 감지 수: {new_response_detected}",
         f"- 평균 overall score: {avg_score:.2f}",
         f"- human review 필요 건수: {human_review}",
+        f"- run_ok count: {harness_summary.run_ok_count}",
+        f"- answer_extracted count: {harness_summary.answer_extracted_count}",
+        f"- answer_accepted count: {harness_summary.answer_accepted_count}",
+        f"- quality_passed count: {harness_summary.quality_passed_count}",
+        f"- accepted rate: {harness_summary.accepted_rate:.2%}",
+        f"- quality pass rate: {harness_summary.quality_pass_rate:.2%}",
+        f"- invalid answer rate: {harness_summary.invalid_answer_rate:.2%}",
+        f"- ui_noise_leak count: {harness_summary.ui_noise_leak_count}",
+        f"- truncation count: {harness_summary.truncation_count}",
+        f"- carryover count: {harness_summary.carryover_count}",
+        f"- speculative count: {harness_summary.speculative_count}",
     ])
+
+    lines.extend(["", "## Primary Error Distribution", ""])
+    if harness_summary.primary_error_distribution:
+        for category, count in sorted(harness_summary.primary_error_distribution.items()):
+            lines.append(f"- {category}: {count}")
+    else:
+        lines.append("- (none)")
 
     lines.extend(["", "## 케이스 요약", ""])
     if not run_results:
@@ -374,12 +427,16 @@ def _build_summary(
                     f"- Question: {pair.question}",
                     f"- Final Answer: {_final_answer_text(item)}",
                     f"- Extraction Source: {pair.extraction_source}",
+                    f"- Run Status: {pair.run_status}",
+                    f"- Extraction Status: {pair.extraction_status}",
+                    f"- Acceptance Status: {pair.acceptance_status}",
+                    f"- Quality Status: {pair.quality_status}",
                     f"- Score: {_score_text(item)}",
                     f"- Reason: {_reason_text(item)}",
                     f"- Fix Suggestion: {_fix_suggestion_text(item)}",
                     f"- Flags: {_format_flags(evaluation.flags)}",
                     f"- Needs Human Review: {evaluation.needs_human_review}",
-                    f"- Error Category: {_error_category_text(item)}",
+                    f"- Primary Error Category: {_primary_error_text(item)}",
                     "",
                 ]
             )

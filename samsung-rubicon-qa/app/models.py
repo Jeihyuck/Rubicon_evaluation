@@ -7,18 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-
-ERROR_CATEGORY_PRIORITY = [
-    "question_repetition",
-    "off_topic_or_carryover",
-    "truncated_answer",
-    "invalid_answer",
-    "speculative_unverified",
-    "promo_or_product_card_leak",
-    "low_confidence_extraction",
-    "weak_keyword_alignment",
-    "too_short",
-]
+from app.error_taxonomy import determine_primary_error_category
 
 
 def _detect_text_language(question: str, locale: str = "") -> str:
@@ -52,15 +41,6 @@ def _language_policy_check(question: str, locale: str, reason: str, fix_suggesti
     return "fail" if _looks_korean_heavy(combined) else "pass"
 
 
-def _primary_error_category(flags: list[str], status: str = "") -> str:
-    for flag in ERROR_CATEGORY_PRIORITY:
-        if flag in flags:
-            return flag
-    if status == "invalid_answer":
-        return "invalid_answer"
-    return "(none)"
-
-
 def _serialize_cleaning_applied(ui_noise_stripped: bool, cta_stripped: bool, promo_stripped: bool) -> str:
     applied: list[str] = []
     if ui_noise_stripped:
@@ -83,6 +63,29 @@ class TestCase:
     question: str
     expected_keywords: list[str] = field(default_factory=list)
     forbidden_keywords: list[str] = field(default_factory=list)
+    scenario_type: Literal["spec", "comparison", "policy_sensitive", "noise_sensitive"] = "spec"
+    product_family: str = "unknown"
+    released_override: bool = False
+    policy_tags: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class CandidateAnswer:
+    raw_text: str
+    cleaned_text: str
+    source: str
+    score: float
+    rank: int = 0
+    keyword_coverage: float = 0.0
+    is_question_repetition: bool = False
+    has_ui_noise: bool = False
+    has_followup_cta: bool = False
+    has_promo_or_review: bool = False
+    is_truncated: bool = False
+    topic_family_match: bool = True
+    is_stale_vs_baseline: bool = False
+    length_score: float = 0.0
+    completeness_score: float = 0.0
 
 
 @dataclass(slots=True)
@@ -100,8 +103,14 @@ class ExtractedPair:
     extraction_confidence: float
     response_ms: int
     status: Literal["passed", "retry_extraction", "invalid_answer", "failed", "invalid_capture"]
+    run_status: Literal["run_ok", "run_failed"] = "run_ok"
+    extraction_status: Literal["not_started", "extracted", "retry_extraction", "invalid_answer", "extraction_failed"] = "not_started"
+    acceptance_status: Literal["accepted", "rejected"] = "rejected"
+    quality_status: Literal["quality_passed", "quality_review", "quality_failed"] = "quality_review"
+    primary_error_category: str = "(none)"
     raw_answer: str = ""
     cleaned_answer: str = ""
+    final_answer: str = ""
     answer_raw: str = ""
     answer_normalized: str = ""
     actual_answer: str = ""
@@ -180,13 +189,35 @@ class ExtractedPair:
     truncated_detected: bool = False
     truncated_answer_detected: bool = False
     carryover_detected: bool = False
+    stale_answer_detected: bool = False
     keyword_coverage_score: float = 0.0
     needs_retry_extraction: bool = False
+    candidate_count: int = 0
+    selected_candidate_rank: int = 0
+    released_override: bool = False
+    evaluator_version: str = ""
+    extractor_version: str = ""
+    harness_version: str = ""
     message_history: list[str] = field(default_factory=list)
 
-    @property
-    def final_answer(self) -> str:
-        return self.cleaned_answer or self.actual_answer_clean or self.actual_answer or self.answer
+    def __post_init__(self) -> None:
+        if not self.final_answer:
+            self.final_answer = self.cleaned_answer or self.actual_answer_clean or self.actual_answer or self.answer
+        if self.run_status == "run_ok" and self.status in {"failed", "invalid_capture"}:
+            self.run_status = "run_failed"
+        if self.extraction_status == "not_started":
+            if self.status == "retry_extraction":
+                self.extraction_status = "retry_extraction"
+            elif self.status == "invalid_answer":
+                self.extraction_status = "invalid_answer"
+            elif self.final_answer or self.answer_raw:
+                self.extraction_status = "extracted"
+            elif self.status == "failed":
+                self.extraction_status = "extraction_failed"
+        if self.status == "passed" and self.acceptance_status == "rejected":
+            self.acceptance_status = "accepted"
+        if self.status == "passed" and self.primary_error_category == "(none)":
+            self.primary_error_category = "(none)"
 
     @property
     def debug_raw_answer(self) -> str:
@@ -194,7 +225,7 @@ class ExtractedPair:
 
     @property
     def debug_cleaned_answer(self) -> str:
-        return self.cleaned_answer or self.actual_answer_clean or self.final_answer
+        return self.cleaned_answer or self.actual_answer_clean or self.final_answer or self.answer
 
     @property
     def raw_clean_diff(self) -> str:
@@ -238,7 +269,28 @@ class RuntimeMetadata:
     commit_sha: str = "unknown"
     extractor_version: str = "unknown"
     evaluator_version: str = "unknown"
+    harness_version: str = "unknown"
     run_mode: str = "unknown"
+
+
+@dataclass(slots=True)
+class HarnessSummary:
+    total_cases: int = 0
+    run_ok_count: int = 0
+    answer_extracted_count: int = 0
+    answer_accepted_count: int = 0
+    quality_passed_count: int = 0
+    retry_extraction_count: int = 0
+    invalid_answer_count: int = 0
+    ui_noise_leak_count: int = 0
+    truncation_count: int = 0
+    carryover_count: int = 0
+    speculative_count: int = 0
+    human_review_count: int = 0
+    accepted_rate: float = 0.0
+    quality_pass_rate: float = 0.0
+    invalid_answer_rate: float = 0.0
+    primary_error_distribution: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -249,6 +301,22 @@ class RunResult:
     pair: ExtractedPair
     evaluation: EvalResult
     runtime_metadata: RuntimeMetadata | None = None
+
+    @property
+    def run_status(self) -> str:
+        return self.pair.run_status
+
+    @property
+    def extraction_status(self) -> str:
+        return self.pair.extraction_status
+
+    @property
+    def acceptance_status(self) -> str:
+        return self.pair.acceptance_status
+
+    @property
+    def quality_status(self) -> str:
+        return self.pair.quality_status
 
     @staticmethod
     def _serialize_flags(flags: list[str]) -> str:
@@ -289,7 +357,12 @@ class RunResult:
             evaluation_reason,
             evaluation_fix_suggestion,
         )
-        error_category = _primary_error_category(self.evaluation.flags, self.pair.status)
+        error_category = determine_primary_error_category(
+            self.evaluation.flags,
+            extraction_status=self.pair.extraction_status,
+            acceptance_status=self.pair.acceptance_status,
+            run_status=self.pair.run_status,
+        )
         runtime_metadata = asdict(self.runtime_metadata) if self.runtime_metadata is not None else {}
 
         return {
@@ -310,6 +383,10 @@ class RunResult:
             "input_dom_verified": self.pair.input_dom_verified,
             "submit_effect_verified": self.pair.submit_effect_verified,
             "input_verified": self.pair.input_verified,
+            "run_status": self.pair.run_status,
+            "extraction_status": self.pair.extraction_status,
+            "acceptance_status": self.pair.acceptance_status,
+            "quality_status": self.pair.quality_status,
             "input_method_used": self.pair.input_method_used,
             "submit_method_used": self.pair.submit_method_used,
             "user_message_echo_verified": self.pair.user_message_echo_verified,
@@ -319,6 +396,7 @@ class RunResult:
             "error_message": self.pair.error_message,
             "reason": evaluation_reason,
             "execution_reason": self.pair.reason,
+            "primary_error_category": self.pair.primary_error_category or error_category,
             "run_mode": self.pair.run_mode,
             "fast_path_used": self.pair.fast_path_used,
             "fix_suggestion": evaluation_fix_suggestion,
@@ -346,8 +424,15 @@ class RunResult:
             "truncated_detected": self.pair.truncated_detected,
             "truncated_answer_detected": self.pair.truncated_answer_detected,
             "carryover_detected": self.pair.carryover_detected,
+            "stale_answer_detected": self.pair.stale_answer_detected,
             "keyword_coverage_score": self.pair.keyword_coverage_score,
             "needs_retry_extraction": self.pair.needs_retry_extraction,
+            "candidate_count": self.pair.candidate_count,
+            "selected_candidate_rank": self.pair.selected_candidate_rank,
+            "released_override": self.pair.released_override,
+            "extractor_version": self.pair.extractor_version,
+            "evaluator_version": self.pair.evaluator_version,
+            "harness_version": self.pair.harness_version,
             "input_scope": self.pair.input_scope or self.pair.input_scope_name,
             "input_selector": self.pair.input_selector,
             "input_candidate_score": self.pair.input_candidate_score,

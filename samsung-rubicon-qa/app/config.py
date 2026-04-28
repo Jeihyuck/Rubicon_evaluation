@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.scenario_tags import RELEASED_PRODUCT_OVERRIDES
+
 
 def _to_bool(value: str | None, default: bool) -> bool:
     if value is None:
@@ -100,6 +102,16 @@ class AppConfig:
     fast_answer_stable_interval_sec: float = 0.4
     reopen_homepage_per_case: bool = True
     reinject_font_css_after_open: bool = False
+    harness_mode: str = "standard"
+    acceptance_min_length: int = 40
+    acceptance_keyword_threshold: float = 0.30
+    retry_on_truncation: bool = True
+    retry_on_carryover: bool = True
+    strip_ui_noise: bool = True
+    strip_followup_cta: bool = True
+    strip_promo_review: bool = True
+    released_product_overrides: list[str] = field(default_factory=lambda: list(RELEASED_PRODUCT_OVERRIDES))
+    report_debug_fields_on_success: bool = False
 
     @property
     def is_speed_mode(self) -> bool:
@@ -214,6 +226,10 @@ def load_config(project_root: Path | None = None) -> AppConfig:
     fast_answer_stable_interval_sec = max(0.1, float(_first_env("FAST_ANSWER_STABLE_INTERVAL_SEC") or "0.4"))
     reopen_homepage_per_case = _to_bool(_first_env("REOPEN_HOMEPAGE_PER_CASE"), True)
     reinject_font_css_after_open = _to_bool(_first_env("REINJECT_FONT_CSS_AFTER_OPEN"), False)
+    harness_mode = str(_first_env("HARNESS_MODE") or "standard").strip().lower()
+    if harness_mode not in {"lean", "standard", "debug"}:
+        harness_mode = "standard"
+    released_product_overrides = _parse_case_ids(_first_env("RELEASED_PRODUCT_OVERRIDES")) or list(RELEASED_PRODUCT_OVERRIDES)
 
     if run_mode == "speed":
         enable_video = False
@@ -287,4 +303,14 @@ def load_config(project_root: Path | None = None) -> AppConfig:
         fast_answer_stable_interval_sec=fast_answer_stable_interval_sec,
         reopen_homepage_per_case=reopen_homepage_per_case,
         reinject_font_css_after_open=reinject_font_css_after_open,
+        harness_mode=harness_mode,
+        acceptance_min_length=max(1, int(_first_env("ACCEPTANCE_MIN_LENGTH") or "40")),
+        acceptance_keyword_threshold=max(0.0, min(1.0, float(_first_env("ACCEPTANCE_KEYWORD_THRESHOLD") or "0.30"))),
+        retry_on_truncation=_to_bool(_first_env("RETRY_ON_TRUNCATION"), True),
+        retry_on_carryover=_to_bool(_first_env("RETRY_ON_CARRYOVER"), True),
+        strip_ui_noise=_to_bool(_first_env("STRIP_UI_NOISE"), True),
+        strip_followup_cta=_to_bool(_first_env("STRIP_FOLLOWUP_CTA"), True),
+        strip_promo_review=_to_bool(_first_env("STRIP_PROMO_REVIEW"), True),
+        released_product_overrides=released_product_overrides,
+        report_debug_fields_on_success=_to_bool(_first_env("REPORT_DEBUG_FIELDS_ON_SUCCESS"), False),
     )

@@ -15,18 +15,31 @@ from app.dom_extractor import (
     _is_question_repetition as _dom_is_question_repetition,
     _looks_truncated as _dom_looks_truncated,
 )
+from app.error_taxonomy import (
+    CARRYOVER_CONTAMINATION,
+    INVALID_ANSWER,
+    LOW_CONFIDENCE_EXTRACTION,
+    PROMO_OR_REVIEW_LEAK,
+    QUESTION_REPETITION,
+    SPECULATIVE_UNVERIFIED,
+    TOPIC_MISMATCH,
+    TRUNCATED_ANSWER,
+    normalize_error_flag,
+)
 from app.models import EvalResult, ExtractedPair, TestCase
 
 
 ALLOWED_FLAGS = {
-    "question_repetition",
-    "off_topic_or_carryover",
-    "speculative_unverified",
-    "truncated_answer",
-    "promo_or_product_card_leak",
+    QUESTION_REPETITION,
+    CARRYOVER_CONTAMINATION,
+    SPECULATIVE_UNVERIFIED,
+    TRUNCATED_ANSWER,
+    PROMO_OR_REVIEW_LEAK,
+    TOPIC_MISMATCH,
+    INVALID_ANSWER,
+    LOW_CONFIDENCE_EXTRACTION,
     "weak_keyword_alignment",
     "too_short",
-    "low_confidence_extraction",
     "timestamp_like",
     "input_not_verified",
     "evaluation_failed",
@@ -39,21 +52,29 @@ FLAG_REASON_SNIPPETS = {
         "ko": "답변이 질문을 반복할 뿐 실제 정보를 제공하지 않습니다",
         "en": "the answer merely repeats the question instead of providing information",
     },
-    "off_topic_or_carryover": {
+    CARRYOVER_CONTAMINATION: {
         "ko": "답변이 현재 질문과 어긋나거나 이전 문맥이 섞여 있습니다",
         "en": "the answer appears off-topic or carried over from another case",
     },
-    "truncated_answer": {
+    TRUNCATED_ANSWER: {
         "ko": "답변이 끝부분에서 잘린 것으로 보입니다",
         "en": "the answer looks truncated near the ending",
     },
-    "speculative_unverified": {
+    SPECULATIVE_UNVERIFIED: {
         "ko": "공식 확인이 어려운 추정 스펙이 포함되어 있습니다",
         "en": "the answer includes speculative or unverified exact specs",
     },
-    "promo_or_product_card_leak": {
+    PROMO_OR_REVIEW_LEAK: {
         "ko": "상품 카드나 가격 같은 홍보성 문구가 답변에 섞였습니다",
         "en": "promotional or product-card text leaked into the answer",
+    },
+    TOPIC_MISMATCH: {
+        "ko": "질문한 제품군과 답변 주제가 맞지 않습니다",
+        "en": "the answer topic does not match the requested product family",
+    },
+    INVALID_ANSWER: {
+        "ko": "추출은 되었지만 채택 가능한 답변으로 보기 어렵습니다",
+        "en": "text was extracted, but it should not be accepted as a valid answer",
     },
     "weak_keyword_alignment": {
         "ko": "질문의 핵심 키워드와 답변 정렬이 약합니다",
@@ -86,21 +107,29 @@ FLAG_FIX_SUGGESTIONS = {
         "ko": "질문 반복 응답은 정답으로 채택하지 말고, 실제 답변 본문이 없으면 재추출하거나 실패 처리하세요.",
         "en": "Do not accept question repetition as a valid answer; re-extract or fail the case when no real answer body exists.",
     },
-    "off_topic_or_carryover": {
+    CARRYOVER_CONTAMINATION: {
         "ko": "채팅 문맥을 초기화하고, 현재 질문에 대한 새 답변인지 다시 검증하세요.",
         "en": "Reset chat context or verify that the newly detected answer belongs to the current question.",
     },
-    "truncated_answer": {
+    TRUNCATED_ANSWER: {
         "ko": "답변 안정화를 한 번 더 기다리거나 DOM 추출을 다시 시도하세요.",
         "en": "Wait one more stabilization cycle or retry DOM extraction after answer completion.",
     },
-    "speculative_unverified": {
+    SPECULATIVE_UNVERIFIED: {
         "ko": "공식 페이지에서 확인되지 않은 정확한 수치나 스펙은 제거하고, 확인 가능한 범위만 답변하세요.",
         "en": "Remove unverified exact figures or specs and limit the answer to information confirmed on official pages.",
     },
-    "promo_or_product_card_leak": {
+    PROMO_OR_REVIEW_LEAK: {
         "ko": "답변 본문 뒤에 붙는 추천 질문, CS AI 챗봇 문의 유도, 더 알아보기, 상담원 연결, 리뷰, 구매 혜택, 대표 모델 예시 같은 visible CTA 문구를 제거한 뒤 핵심 답변만 채택하세요.",
         "en": "Filter product-card and price blocks from DOM history before selecting the final answer.",
+    },
+    TOPIC_MISMATCH: {
+        "ko": "질문 제품군과 같은 토픽 패밀리의 후보만 채택하세요.",
+        "en": "Accept only candidates that match the same product family as the question.",
+    },
+    INVALID_ANSWER: {
+        "ko": "추출된 텍스트를 그대로 통과시키지 말고 acceptance gate를 통과한 본문만 평가하세요.",
+        "en": "Do not evaluate extracted text unless it passed the acceptance gate.",
     },
     "weak_keyword_alignment": {
         "ko": "질문과 답변의 주제 정렬과 예상 키워드 포함 여부를 다시 확인하세요.",
@@ -129,6 +158,8 @@ FLAG_FIX_SUGGESTIONS = {
 }
 
 UNANNOUNCED_PRODUCT_PATTERNS = [
+    r"\b(?:galaxy\s*)?s26(?:\s*(?:ultra|plus))?\b",
+    r"갤럭시\s*s26(?:\s*(?:울트라|플러스))?",
     r"\bwatch ultra \(2025\)\b",
     r"\bbuds4 pro\b",
 ]
@@ -485,6 +516,8 @@ def _looks_speculative_unverified(question: str, answer: str) -> bool:
     has_speculative_cue = any(cue in lowered_answer for cue in speculative_cues)
     if has_sensitive_commerce_claim:
         return True
+    if asks_unannounced and (has_exact_specs or exact_spec_count >= 2):
+        return True
     if has_released_override:
         return has_speculative_cue
     return has_speculative_cue or (asks_unannounced and has_exact_specs)
@@ -511,7 +544,7 @@ def _sanitize_released_override_text(text: str, question: str, answer: str) -> s
 
 
 def _normalize_speculative_flag(question: str, answer: str, flags: list[str]) -> list[str]:
-    if "speculative_unverified" not in flags:
+    if SPECULATIVE_UNVERIFIED not in flags:
         return flags
 
     lowered_question = _normalize_answer_text(question).lower()
@@ -524,9 +557,12 @@ def _normalize_speculative_flag(question: str, answer: str, flags: list[str]) ->
     has_speculative_cue = any(cue in lowered_answer for cue in speculative_cues)
     has_released_override = _contains_released_override(lowered_question) or _contains_released_override(lowered_answer)
     has_sensitive_commerce_claim = any(re.search(pattern, lowered_answer, re.IGNORECASE) for pattern in SENSITIVE_COMMERCE_PATTERNS)
+    has_exact_specs = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:mp|mah|wh|kg|hz|gb|mm|형|inch|원)\b", lowered_answer))
 
     if has_released_override and not has_speculative_cue and not asks_unannounced and not has_sensitive_commerce_claim:
-        return [flag for flag in flags if flag != "speculative_unverified"]
+        return [flag for flag in flags if flag != SPECULATIVE_UNVERIFIED]
+    if asks_unannounced and has_exact_specs:
+        return flags
     return flags
 
 
@@ -545,17 +581,23 @@ def _language_mismatch(text: str, target_language: str) -> bool:
 
 
 def _reason_lead(language: str, flags: list[str], overall_score: float) -> str:
-    if "question_repetition" in flags:
+    if QUESTION_REPETITION in flags:
         return (
             "답변이 질문을 반복해 실제 정보를 제공하지 않으므로 품질이 매우 낮습니다."
             if language == "ko"
             else "The answer quality is very poor because it repeats the question instead of providing real information."
         )
-    if "off_topic_or_carryover" in flags:
+    if CARRYOVER_CONTAMINATION in flags or TOPIC_MISMATCH in flags:
         return (
             "답변 주제가 현재 질문과 어긋나 품질이 매우 낮습니다."
             if language == "ko"
             else "The answer quality is very poor because the topic does not match the current question."
+        )
+    if INVALID_ANSWER in flags:
+        return (
+            "추출된 텍스트를 유효한 답변으로 채택할 수 없어 품질이 매우 낮습니다."
+            if language == "ko"
+            else "The answer quality is very poor because the extracted text should not be accepted as a valid answer."
         )
     if overall_score <= 2.0:
         return (
@@ -617,7 +659,7 @@ def _default_fix(language: str, flags: list[str]) -> str:
         suggestion = _localized_text(FLAG_FIX_SUGGESTIONS.get(flag, flag), language)
         if suggestion and suggestion not in suggestions:
             suggestions.append(suggestion)
-    if any(flag in flags for flag in {"promo_or_product_card_leak", "off_topic_or_carryover", "question_repetition"}):
+    if any(flag in flags for flag in {PROMO_OR_REVIEW_LEAK, CARRYOVER_CONTAMINATION, TOPIC_MISMATCH, QUESTION_REPETITION}):
         cleaning_suggestion = _localized_text(CLEANING_FIX_SUGGESTION, language)
         if cleaning_suggestion not in suggestions:
             suggestions.append(cleaning_suggestion)
@@ -823,7 +865,7 @@ def _augment_fix_suggestion(base_fix: str, flags: list[str], language: str) -> s
         suggestion = _localized_text(FLAG_FIX_SUGGESTIONS.get(flag, ""), language)
         if suggestion and suggestion not in suggestions:
             suggestions.append(suggestion)
-    if any(flag in flags for flag in {"promo_or_product_card_leak", "off_topic_or_carryover", "question_repetition"}):
+    if any(flag in flags for flag in {PROMO_OR_REVIEW_LEAK, CARRYOVER_CONTAMINATION, QUESTION_REPETITION, TOPIC_MISMATCH}):
         cleaning_suggestion = _localized_text(CLEANING_FIX_SUGGESTION, language)
         if cleaning_suggestion and cleaning_suggestion not in suggestions:
             suggestions.append(cleaning_suggestion)
@@ -880,6 +922,7 @@ def _coerce_eval_payload(payload: dict[str, Any], target_language: str) -> EvalR
 def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: EvalResult) -> EvalResult:
     normalized_answer = _normalize_answer_text(_evaluation_answer(pair))
     flags = list(result.flags)
+    flags = [normalize_error_flag(flag) for flag in flags if normalize_error_flag(flag)]
     target_language = detect_evaluation_language(test_case.question, pair.locale)
     keyword_coverage = max(
         _keyword_coverage(test_case.question, normalized_answer, test_case.expected_keywords),
@@ -907,19 +950,19 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         if not any(keyword.lower() in lowered_answer for keyword in test_case.expected_keywords):
             _append_flag(flags, "weak_keyword_alignment")
     if getattr(pair, "question_repetition_detected", False) and not substantive_alignment:
-        _append_flag(flags, "question_repetition")
+        _append_flag(flags, QUESTION_REPETITION)
     if getattr(pair, "carryover_detected", False) and not substantive_alignment:
-        _append_flag(flags, "off_topic_or_carryover")
+        _append_flag(flags, CARRYOVER_CONTAMINATION)
     if pair.extraction_source == "unknown" or pair.extraction_confidence < 0.45:
-        _append_flag(flags, "low_confidence_extraction")
+        _append_flag(flags, LOW_CONFIDENCE_EXTRACTION)
     if getattr(pair, "truncated_detected", False) or getattr(pair, "truncated_answer_detected", False) or _looks_truncated(normalized_answer):
-        _append_flag(flags, "truncated_answer")
+        _append_flag(flags, TRUNCATED_ANSWER)
     if _contains_promo_or_product_card_text(normalized_answer):
-        _append_flag(flags, "promo_or_product_card_leak")
+        _append_flag(flags, PROMO_OR_REVIEW_LEAK)
     if _contains_question_repetition(test_case.question, normalized_answer) and not substantive_alignment:
-        _append_flag(flags, "question_repetition")
+        _append_flag(flags, QUESTION_REPETITION)
     if _looks_speculative_unverified(test_case.question, normalized_answer):
-        _append_flag(flags, "speculative_unverified")
+        _append_flag(flags, SPECULATIVE_UNVERIFIED)
 
     flags = _normalize_speculative_flag(test_case.question, normalized_answer, flags)
 
@@ -933,23 +976,23 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         and _question_keywords_missing(test_case.question, normalized_answer)
     )
     if real_topic_mismatch and keyword_coverage < 0.5:
-        _append_flag(flags, "off_topic_or_carryover")
+        _append_flag(flags, TOPIC_MISMATCH)
 
-    if "question_repetition" in flags:
+    if QUESTION_REPETITION in flags:
         correctness_score = 0.0
         completeness_score = min(completeness_score, 0.2)
         relevance_score = min(relevance_score, 0.4)
         clarity_score = min(clarity_score, 0.2)
         groundedness_score = min(groundedness_score, 0.2)
 
-    if "off_topic_or_carryover" in flags:
+    if CARRYOVER_CONTAMINATION in flags or TOPIC_MISMATCH in flags:
         correctness_score = min(correctness_score, 0.2)
         relevance_score = min(relevance_score, 0.4)
         completeness_score = min(completeness_score, 0.4)
         clarity_score = min(clarity_score, 0.3)
         groundedness_score = min(groundedness_score, 0.2)
 
-    if "speculative_unverified" in flags:
+    if SPECULATIVE_UNVERIFIED in flags:
         groundedness_score = min(groundedness_score, 0.3)
         correctness_score = min(correctness_score, 1.8)
     elif _contains_released_override(test_case.question) or _contains_released_override(normalized_answer):
@@ -959,18 +1002,21 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
         if has_sensitive_commerce_claim or exact_spec_count >= 3:
             groundedness_score = min(groundedness_score, 0.5)
 
-    if "truncated_answer" in flags:
+    if TRUNCATED_ANSWER in flags:
         completeness_score = min(completeness_score, 0.6)
         clarity_score = min(clarity_score, 0.4)
 
-    if "promo_or_product_card_leak" in flags:
+    if PROMO_OR_REVIEW_LEAK in flags:
         relevance_score = min(relevance_score, 0.8)
         clarity_score = min(clarity_score, 0.4)
 
     if "too_short" in flags:
         completeness_score = min(completeness_score, 0.3)
 
-    hard_invalid_flags = {"question_repetition", "off_topic_or_carryover", "truncated_answer"}
+    if pair.status == "invalid_answer" and not substantive_alignment:
+        _append_flag(flags, INVALID_ANSWER)
+
+    hard_invalid_flags = {QUESTION_REPETITION, CARRYOVER_CONTAMINATION, TOPIC_MISMATCH, TRUNCATED_ANSWER, INVALID_ANSWER}
     has_hard_invalid_signal = any(flag in flags for flag in hard_invalid_flags)
 
     if pair.status in {"retry_extraction", "invalid_answer"}:
@@ -988,17 +1034,17 @@ def _apply_quality_guardrails(test_case: TestCase, pair: ExtractedPair, result: 
     overall_score = _round_score(
         correctness_score + relevance_score + completeness_score + clarity_score + groundedness_score
     )
-    if "question_repetition" in flags:
+    if QUESTION_REPETITION in flags:
         overall_score = min(overall_score, 1.0)
-    if "off_topic_or_carryover" in flags:
+    if CARRYOVER_CONTAMINATION in flags or TOPIC_MISMATCH in flags:
         overall_score = min(overall_score, 1.5)
 
     overall_score = min(overall_score, overall_cap)
-    if "off_topic_or_carryover" in flags or "question_repetition" in flags:
+    if any(flag in flags for flag in [CARRYOVER_CONTAMINATION, TOPIC_MISMATCH, QUESTION_REPETITION, INVALID_ANSWER]):
         needs_human_review = True
 
     hallucination_risk = result.hallucination_risk
-    if "speculative_unverified" in flags:
+    if SPECULATIVE_UNVERIFIED in flags:
         hallucination_risk = "high"
     elif groundedness_score <= 0.2:
         hallucination_risk = "high"
@@ -1118,6 +1164,15 @@ def evaluate_pair(
         logger.info("evaluation completed")
         return _failed_answer_evaluation(pair)
 
+    if (not evaluation_answer or evaluation_answer == "(none)") and pair.input_verified and pair.submit_effect_verified and pair.new_bot_response_detected and not pair.baseline_menu_detected:
+        logger.warning(
+            "Answer extraction failed for case %s (status=%s); using failed-answer fallback evaluation",
+            pair.case_id,
+            pair.status,
+        )
+        logger.info("evaluation completed")
+        return _failed_answer_evaluation(pair)
+
     if (
         not evaluation_answer
         or evaluation_answer == "(none)"
@@ -1148,8 +1203,8 @@ def evaluate_pair(
         "Do not mix Korean and English except for product names or standard abbreviations. "
         "Flags must remain canonical English identifiers. overall_score must equal the sum of the component scores. "
         "Question repetition is a hard fail and must be called out in the first sentence of reason. "
-        "Real off-topic carryover is a hard fail and must be called out in the first sentence of reason. "
-        "Do not assign off_topic_or_carryover when the answer covers the right product family but includes extra promo, review, or speculative noise; use promo_or_product_card_leak or speculative_unverified instead. "
+        "Carryover contamination or clear topic mismatch is a hard fail and must be called out in the first sentence of reason. "
+        "Do not assign carryover_contamination when the answer covers the right product family but includes extra promo, review, or speculative noise; use promo_or_review_leak or speculative_unverified instead. "
         "If the answer looks truncated, reduce completeness. If it contains speculative exact specs or unsupported availability claims, reduce groundedness aggressively. "
         "If overall_score <= 2.0, the first sentence of reason must be clearly negative. If overall_score >= 7.0, the first sentence must be clearly positive. "
         "Return JSON only matching the provided schema."

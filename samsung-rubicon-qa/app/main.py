@@ -11,8 +11,9 @@ from app.config import load_config
 from app.csv_loader import load_test_cases
 from app.dom_extractor import EXTRACTOR_VERSION
 from app.evaluator import EVALUATOR_VERSION, build_input_not_verified_evaluation, detect_evaluation_language, evaluate_pair
+from app.harness import HARNESS_VERSION, build_harness_summary, finalize_pair_for_harness
 from app.logger import create_logger
-from app.models import RunResult, RuntimeMetadata
+from app.models import HarnessSummary, RunResult, RuntimeMetadata
 from app.report_writer import format_case_console_block, write_reports
 from app.samsung_rubicon import configure_runtime, run_single_case
 from app.utils import artifact_timestamp, sanitize_filename
@@ -36,6 +37,7 @@ def _collect_runtime_metadata(project_root: Path, run_mode: str) -> RuntimeMetad
         commit_sha=_git_value(project_root, "rev-parse", "HEAD"),
         extractor_version=EXTRACTOR_VERSION,
         evaluator_version=EVALUATOR_VERSION,
+        harness_version=HARNESS_VERSION,
         run_mode=run_mode,
     )
 
@@ -129,7 +131,7 @@ def _ensure_input_not_verified_flag(pair, evaluation, target_language: str):
     )
 
 
-def run(project_root: Path | None = None) -> list[RunResult]:
+def run(project_root: Path | None = None, return_summary: bool = False) -> list[RunResult] | tuple[list[RunResult], HarnessSummary]:
     """Execute the configured batch and return all case results."""
 
     config = load_config(project_root)
@@ -178,6 +180,7 @@ def run(project_root: Path | None = None) -> list[RunResult]:
                 evaluate_pair(config, test_case, pair, logger, target_language=target_language),
                 target_language,
             )
+            pair = finalize_pair_for_harness(test_case, pair, evaluation)
             run_result = RunResult(
                 test_case=test_case,
                 pair=pair,
@@ -187,15 +190,20 @@ def run(project_root: Path | None = None) -> list[RunResult]:
             results.append(run_result)
             _print_case_summary(config.project_root, run_result)
     finally:
-        browser_manager.stop()
+        try:
+            browser_manager.stop()
+        except Exception as error:
+            logger.warning("browser manager stop failed: %s", error)
 
+    harness_summary = build_harness_summary(results)
     report_paths = write_reports(config, results, runtime_metadata={
         "branch": runtime_metadata.branch,
         "commit_sha": runtime_metadata.commit_sha,
         "extractor_version": runtime_metadata.extractor_version,
         "evaluator_version": runtime_metadata.evaluator_version,
+        "harness_version": runtime_metadata.harness_version,
         "run_mode": runtime_metadata.run_mode,
-    })
+    }, harness_summary=harness_summary)
     logger.info("report written")
     logger.info("check results in this order:")
     logger.info("1. %s", report_paths["conversation"])
@@ -203,4 +211,6 @@ def run(project_root: Path | None = None) -> list[RunResult]:
     logger.info("3. %s", report_paths["csv"])
     logger.info("4. %s", report_paths["summary"])
     logger.info("5. %s", config.chatbox_dir)
+    if return_summary:
+        return results, harness_summary
     return results

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.config import AppConfig
+from app.harness import build_harness_summary
 from app.evaluator import fallback_evaluation
 from app.models import EvalResult, ExtractedPair, RunResult, RuntimeMetadata, TestCase
 from app.report_writer import _build_summary, format_case_console_block, write_reports
@@ -208,6 +209,24 @@ class TestBuildSummary:
         summary = _build_summary([])
         assert "총 케이스 수: 0" in summary
 
+    def test_summary_includes_harness_metrics(self):
+        result = _make_result("c01", status="passed")
+        result = replace(
+            result,
+            pair=replace(
+                result.pair,
+                run_status="run_ok",
+                extraction_status="extracted",
+                acceptance_status="accepted",
+                quality_status="quality_passed",
+            ),
+        )
+        harness_summary = build_harness_summary([result])
+        summary = _build_summary([result], harness_summary=harness_summary)
+        assert "answer_accepted count: 1" in summary
+        assert "quality_passed count: 1" in summary
+        assert "accepted rate: 100.00%" in summary
+
 
 class TestBuildConversation:
     """Tests for the per-case evidence conversation report."""
@@ -332,7 +351,7 @@ class TestBuildConversation:
             result,
             evaluation=replace(
                 result.evaluation,
-                flags=["promo_or_product_card_leak", "question_repetition", "truncated_answer"],
+                flags=["promo_or_review_leak", "question_repetition", "truncated_answer"],
                 overall_score=0.5,
                 reason="답변이 질문을 반복합니다.",
             ),
@@ -343,6 +362,26 @@ class TestBuildConversation:
             paths = write_reports(config, [result])
             content = Path(paths["conversation"]).read_text(encoding="utf-8")
         assert "Error Category: question_repetition" in content
+
+    def test_status_separation_can_be_reported(self):
+        result = _make_result("c01", status="passed")
+        result = replace(
+            result,
+            pair=replace(
+                result.pair,
+                run_status="run_ok",
+                extraction_status="extracted",
+                acceptance_status="accepted",
+                quality_status="quality_review",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = _make_config(tmpdir)
+            config.ensure_directories()
+            paths = write_reports(config, [result])
+            content = Path(paths["conversation"]).read_text(encoding="utf-8")
+        assert "Acceptance Status: accepted" in content
+        assert "Quality Status: quality_review" in content
 
     def test_conversation_marks_language_policy_failure(self):
         result = _make_result("c01", status="failed", run_mode="debug")

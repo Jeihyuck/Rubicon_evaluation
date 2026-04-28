@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.models import ResolvedChatContext
+from app.models import CandidateAnswer, ResolvedChatContext, TestCase
 from app.utils import build_locator, ensure_parent
 
 
@@ -16,6 +16,7 @@ STATIC_UI_TEXTS = [
     "구매 상담사와 채팅하세요",
     "Samsung AI Assistant",
     "Samsung AI assistant",
+    "환영합니다",
     "아래에서 원하는 항목을 선택해 주세요",
     "구매 상담사 연결",
     "주문·배송 조회",
@@ -43,6 +44,11 @@ STATIC_UI_TEXTS = [
     "더보기",
     "리치 텍스트 메시지",
     "자세한 내용을 보려면 Enter를 누르세요",
+    "오늘은 무엇을 도와드릴까요",
+    "갤럭시 워치8 관련 기획전 알려주세요.",
+    "갤럭시 S26 스펙이 궁금해요.",
+    "최신 노트북에 대해 알고싶어요.",
+    "삼성닷컴에서 어떤 제품들을 구매할 수 있나요?",
 ]
 
 FOLLOW_UP_SPLIT_MARKERS = [
@@ -70,6 +76,7 @@ FOLLOWUP_CTA_PATTERNS = [
     r"혜택 포인트",
     r"리뷰 한줄 요약",
     r"리뷰에서는",
+    r"리뷰에서도",
     r"실사용자 반응",
     r"현재 구매 가능",
     r"대표 모델 예시",
@@ -101,9 +108,37 @@ ADVISORY_TAIL_PATTERNS = [
     r"다음 선택 포인트는\s*\d+가지",
     r"다음 선택 포인트는",
     r"정리하면",
+    r"구매에 도움이 되는 포인트",
+    r"이 사양이 실사용에서 좋은 점",
     r"울트라가 딱 맞는 경우",
     r"S\d{2}\+?가 딱 맞는 경우",
     r".+가 딱 맞는 경우",
+]
+
+PROGRESS_PLACEHOLDER_PATTERNS = [
+    r"정리하고\s*있(?:어요|습니다)",
+    r"비교해\s*보고\s*있(?:어요|습니다)",
+    r"확인하고\s*있(?:어요|습니다)",
+    r"찾아보고\s*있(?:어요|습니다)",
+    r"살펴보고\s*있(?:어요|습니다)",
+]
+
+DETAIL_SIGNAL_PATTERNS = [
+    r"\d+(?:,\d{3})?\s*(?:mah|wh|gb|tb|mp|hz|kg|mm|원|형|inch)\b",
+    r"ip\d{2}",
+    r"anc",
+    r"(?:지원|제공|탑재|적용|포함)(?:합니다|돼요|됩니다|해요|이에요)",
+    r"구성(?:은|으로|되어|돼요|됩니다|입니다|이에요)",
+    r"(?:광학 줌|디지털 줌|dynamic amoled|thunderbolt|family hub|smartthings)",
+]
+
+BROKEN_FRAGMENT_PATTERNS = [
+    r"균형이\s*\.",
+    r"매칭이\s*\.",
+    r"보시는 게\s*\.",
+    r"체감이\s*\.",
+    r"하기\s*\.",
+    r"좋아요\s*\.",
 ]
 
 META_PREFIX_PATTERNS = [
@@ -180,6 +215,7 @@ PROMO_REVIEW_PATTERNS = [
     r"리뷰 한줄 요약",
     r"실사용자 반응",
     r"리뷰에서는",
+    r"리뷰에서도",
     r"구매 혜택",
     r"할인",
     r"쿠폰",
@@ -398,6 +434,29 @@ def _looks_truncated(answer: str) -> bool:
     if any(normalized.endswith(ending) for ending in TRUNCATED_ENDINGS):
         return True
     return bool(re.search(r"(?:sm-[a-z0-9]+|\d{2,3}(?:,\d{3})+원)$", normalized))
+
+
+def _looks_like_progress_placeholder(answer: str) -> bool:
+    normalized = _normalize_text(answer)
+    if not normalized:
+        return False
+    if not any(re.search(pattern, normalized, re.IGNORECASE) for pattern in PROGRESS_PLACEHOLDER_PATTERNS):
+        return False
+    without_progress = normalized
+    for pattern in PROGRESS_PLACEHOLDER_PATTERNS:
+        without_progress = re.sub(pattern, " ", without_progress, flags=re.IGNORECASE)
+    without_progress = re.sub(r"[.,:;!?()\-]+", " ", without_progress)
+    without_progress = " ".join(without_progress.split())
+    if not without_progress:
+        return True
+    return not any(re.search(pattern, without_progress, re.IGNORECASE) for pattern in DETAIL_SIGNAL_PATTERNS)
+
+
+def _contains_broken_fragment(answer: str) -> bool:
+    normalized = _normalize_text(answer)
+    if not normalized:
+        return False
+    return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in BROKEN_FRAGMENT_PATTERNS)
 
 
 def _strip_ui_noise(text: str) -> tuple[str, bool]:
@@ -726,8 +785,12 @@ def _clean_answer_candidate_details(
         cleaned = _strip_trailing_broken_sentence(cleaned)
         cleaned = " ".join(cleaned.split()).strip()
         cta_stripped = cta_stripped or had_followup_marker
+        if _looks_like_progress_placeholder(cleaned):
+            cleaned = ""
 
     truncated_detected = bool(cleaned) and _looks_truncated(cleaned)
+    if not truncated_detected and cleaned and _contains_broken_fragment(cleaned):
+        truncated_detected = True
     if truncated_detected:
         cleaned = ""
     elif cleaned and len(cleaned) < MIN_CLEAN_ANSWER_LEN:
@@ -1213,6 +1276,104 @@ def choose_best_answer_candidate(
     return best_candidate
 
 
+def collect_bot_candidates(
+    chat_context: ResolvedChatContext,
+    question: str = "",
+    scenario_meta: TestCase | None = None,
+) -> list[CandidateAnswer]:
+    structured_history = extract_structured_message_history(chat_context)
+    bot_texts = extract_bot_message_texts(chat_context)
+    current_bot_count = len(bot_texts)
+    bot_count_increased = current_bot_count > chat_context.baseline_bot_count
+    new_bot_by_count = bot_texts[chat_context.baseline_bot_count:current_bot_count] if bot_count_increased else []
+    new_bot_segments = compute_new_text_segments(chat_context.baseline_bot_messages, bot_texts)
+    new_history_segments = compute_new_text_segments(
+        chat_context.baseline_message_nodes_snapshot,
+        structured_history.get("history", []),
+    )
+    diff_segments = diff_visible_text_against_baseline(chat_context)
+    merged_segments = _merge_answer_candidates(
+        _ordered_unique_segments(_remove_question_echo_segments(filter_out_static_ui_text(new_bot_by_count + new_bot_segments), question)),
+        _ordered_unique_segments(_remove_question_echo_segments(filter_out_static_ui_text(new_history_segments + diff_segments), question)),
+    )
+
+    expected_keywords = list(getattr(scenario_meta, "expected_keywords", []) or [])
+    question_family = _detect_topic_family(question)
+    candidates: list[CandidateAnswer] = []
+    for index, segment in enumerate(merged_segments, start=1):
+        details = _clean_answer_candidate_details(
+            segment,
+            question=question,
+            baseline_last_answer=getattr(chat_context, "baseline_last_answer", ""),
+            baseline_topic_family=getattr(chat_context, "baseline_topic_family", "unknown"),
+        )
+        cleaned = details.get("cleaned_answer", "")
+        raw = details.get("raw_answer", "")
+        text_for_scoring = cleaned or raw
+        keyword_coverage = _keyword_coverage(question, text_for_scoring, expected_keywords)
+        topic_family = details.get("topic_family", "unknown")
+        topic_family_match = question_family == "unknown" or topic_family == "unknown" or question_family == topic_family
+        length_score = min(len(cleaned or raw), 240) / 24.0
+        completeness_score = 1.0 if cleaned and not details.get("truncated_detected", False) else 0.0
+        score = length_score
+        score += keyword_coverage * 10.0
+        score += 1.5 if topic_family_match else -3.0
+        score += completeness_score * 2.0
+        if details.get("question_repetition_detected", False):
+            score -= 12.0
+        if details.get("carryover_detected", False):
+            score -= 10.0
+        if details.get("truncated_detected", False):
+            score -= 8.0
+        if details.get("ui_noise_stripped", False):
+            score -= 1.5
+        if details.get("cta_stripped", False):
+            score -= 1.0
+        if details.get("promo_stripped", False):
+            score -= 1.0
+        candidates.append(
+            CandidateAnswer(
+                raw_text=raw,
+                cleaned_text=cleaned,
+                source="dom",
+                score=score,
+                rank=index,
+                keyword_coverage=keyword_coverage,
+                is_question_repetition=bool(details.get("question_repetition_detected", False)),
+                has_ui_noise=bool(details.get("ui_noise_stripped", False)),
+                has_followup_cta=bool(details.get("cta_stripped", False)),
+                has_promo_or_review=bool(details.get("promo_stripped", False)),
+                is_truncated=bool(details.get("truncated_detected", False)),
+                topic_family_match=topic_family_match,
+                is_stale_vs_baseline=bool(details.get("carryover_detected", False)),
+                length_score=length_score,
+                completeness_score=completeness_score,
+            )
+        )
+    candidates.sort(key=lambda item: item.score, reverse=True)
+    for rank, candidate in enumerate(candidates, start=1):
+        candidate.rank = rank
+    return candidates
+
+
+def rank_candidates(
+    candidates: list[CandidateAnswer],
+    question: str,
+    scenario_meta: TestCase | None = None,
+) -> CandidateAnswer | None:
+    del question, scenario_meta
+    for candidate in candidates:
+        if (
+            candidate.cleaned_text
+            and not candidate.is_question_repetition
+            and not candidate.is_stale_vs_baseline
+            and not candidate.is_truncated
+            and not candidate.cleaned_text.endswith("?")
+        ):
+            return candidate
+    return None
+
+
 def _flatten_scope_text(scope_result: Any) -> str:
     return _normalize_multiline_text(str(scope_result or ""))
 
@@ -1243,7 +1404,11 @@ def diff_visible_text_against_baseline(chat_context: ResolvedChatContext) -> lis
     return compute_new_text_segments(chat_context.baseline_visible_blocks, current_blocks)
 
 
-def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, question: str = "") -> dict[str, Any]:
+def build_post_baseline_answer_candidates(
+    chat_context: ResolvedChatContext,
+    question: str = "",
+    scenario_meta: TestCase | None = None,
+) -> dict[str, Any]:
     structured_history = extract_structured_message_history(chat_context)
     bot_texts = extract_bot_message_texts(chat_context)
     current_bot_count = len(bot_texts)
@@ -1255,20 +1420,6 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
         structured_history.get("history", []),
     )
     diff_segments = diff_visible_text_against_baseline(chat_context)
-
-    cleaned_candidates = [
-        _clean_answer_candidate_details(
-            segment,
-            question=question,
-            baseline_last_answer=getattr(chat_context, "baseline_last_answer", ""),
-            baseline_topic_family=getattr(chat_context, "baseline_topic_family", "unknown"),
-        )
-        for segment in new_bot_by_count + new_bot_segments + new_history_segments + diff_segments
-    ]
-    any_question_repetition_detected = any(item["question_repetition_detected"] for item in cleaned_candidates)
-    any_truncated_detected = any(item["truncated_detected"] for item in cleaned_candidates)
-    any_carryover_detected = any(item["carryover_detected"] for item in cleaned_candidates)
-
     strict_candidates = _ordered_unique_segments(
         _remove_question_echo_segments(
             filter_out_static_ui_text(new_bot_by_count + new_bot_segments),
@@ -1281,21 +1432,54 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
             question,
         )
     )
-
     all_candidates = _merge_answer_candidates(strict_candidates, fallback_candidates)
+    raw_candidate_details = [
+        _clean_answer_candidate_details(
+            segment,
+            question=question,
+            baseline_last_answer=getattr(chat_context, "baseline_last_answer", ""),
+            baseline_topic_family=getattr(chat_context, "baseline_topic_family", "unknown"),
+        )
+        for segment in new_bot_by_count + new_bot_segments + new_history_segments + diff_segments
+    ]
+    candidates = [
+        candidate
+        for candidate in collect_bot_candidates(chat_context, question=question, scenario_meta=scenario_meta)
+        if (candidate.cleaned_text or candidate.raw_text) in all_candidates
+    ]
+    cleaned_candidates = [
+        {
+            "question_repetition_detected": details.get("question_repetition_detected", False),
+            "truncated_detected": details.get("truncated_detected", False),
+            "carryover_detected": details.get("carryover_detected", False),
+            "ui_noise_stripped": details.get("ui_noise_stripped", False),
+            "cta_stripped": details.get("cta_stripped", False),
+            "promo_stripped": details.get("promo_stripped", False),
+            "keyword_coverage_score": details.get("keyword_coverage_score", 0.0),
+        }
+        for details in raw_candidate_details
+    ]
+    any_question_repetition_detected = any(item["question_repetition_detected"] for item in cleaned_candidates)
+    any_truncated_detected = any(item["truncated_detected"] for item in cleaned_candidates)
+    any_carryover_detected = any(item["carryover_detected"] for item in cleaned_candidates)
+
     baseline_last_answer = getattr(chat_context, "baseline_last_answer", "")
     baseline_topic_family = getattr(chat_context, "baseline_topic_family", "unknown")
 
     selected_candidate = _clean_answer_candidate_details("", question=question)
     selected_source = "unknown"
     selected_confidence = 0.0
-    if all_candidates:
-        selected_candidate = choose_best_answer_candidate(
-            all_candidates,
-            question=question,
-            baseline_last_answer=baseline_last_answer,
-            baseline_topic_family=baseline_topic_family,
-        )
+    selected_rank = 0
+    if candidates:
+        ranked_candidate = rank_candidates(candidates, question=question, scenario_meta=scenario_meta)
+        if ranked_candidate is not None:
+            selected_rank = ranked_candidate.rank
+            selected_candidate = _clean_answer_candidate_details(
+                ranked_candidate.raw_text,
+                question=question,
+                baseline_last_answer=baseline_last_answer,
+                baseline_topic_family=baseline_topic_family,
+            )
         normalized_selected = _normalize_text(selected_candidate.get("cleaned_answer", "") or selected_candidate.get("raw_answer", ""))
         strict_normalized = {
             _normalize_text(candidate)
@@ -1354,6 +1538,9 @@ def build_post_baseline_answer_candidates(chat_context: ResolvedChatContext, que
         "strict_candidates": strict_candidates,
         "fallback_candidates": fallback_candidates,
         "all_candidates": all_candidates,
+        "candidate_count": len(candidates),
+        "selected_candidate_rank": selected_rank,
+        "stale_answer_detected": carryover_detected,
     }
 
 
@@ -1455,8 +1642,13 @@ def save_html_fragment(chat_context: ResolvedChatContext, output_path: Path | No
     return str(output_path)
 
 
-def extract_dom_payload(chat_context: ResolvedChatContext, fragment_path: Path | None, question: str = "") -> dict[str, Any]:
-    candidate_data = build_post_baseline_answer_candidates(chat_context, question=question)
+def extract_dom_payload(
+    chat_context: ResolvedChatContext,
+    fragment_path: Path | None,
+    question: str = "",
+    scenario_meta: TestCase | None = None,
+) -> dict[str, Any]:
+    candidate_data = build_post_baseline_answer_candidates(chat_context, question=question, scenario_meta=scenario_meta)
     html_fragment_path = save_html_fragment(chat_context, fragment_path)
     return {
         "success": bool(candidate_data["cleaned_answer"]),
@@ -1471,6 +1663,9 @@ def extract_dom_payload(chat_context: ResolvedChatContext, fragment_path: Path |
         "cta_stripped": candidate_data["cta_stripped"],
         "promo_stripped": candidate_data["promo_stripped"],
         "carryover_detected": bool(candidate_data.get("carryover_detected", False)),
+        "stale_answer_detected": bool(candidate_data.get("stale_answer_detected", False)),
+        "candidate_count": int(candidate_data.get("candidate_count", 0) or 0),
+        "selected_candidate_rank": int(candidate_data.get("selected_candidate_rank", 0) or 0),
         "keyword_coverage_score": float(candidate_data.get("keyword_coverage_score", 0.0) or 0.0),
         "history": candidate_data["history"],
         "structured_message_history_count": candidate_data["structured_message_history_count"],

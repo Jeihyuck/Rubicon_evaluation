@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -15,6 +16,55 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 
 from app.config import AppConfig
 from app.utils import ensure_parent
+
+
+_CHAT_STATE_COOKIE_PREFIXES = (
+    "spr-chat-token-",
+)
+
+_CHAT_STATE_DOMAIN_HINTS = (
+    "sprinklr.com",
+)
+
+_CHAT_STATE_ORIGIN_HINTS = (
+    "sprinklr.com",
+)
+
+
+def _is_chat_state_cookie(cookie: dict[str, Any]) -> bool:
+    name = str(cookie.get("name") or "")
+    domain = str(cookie.get("domain") or "")
+    if any(name.startswith(prefix) for prefix in _CHAT_STATE_COOKIE_PREFIXES):
+        return True
+    return any(hint in domain for hint in _CHAT_STATE_DOMAIN_HINTS)
+
+
+def _is_chat_state_origin(origin_entry: dict[str, Any]) -> bool:
+    origin = str(origin_entry.get("origin") or "")
+    return any(hint in origin for hint in _CHAT_STATE_ORIGIN_HINTS)
+
+
+def _load_sanitized_storage_state(storage_state_path: Path, logger: Any) -> dict[str, Any]:
+    payload = json.loads(storage_state_path.read_text(encoding="utf-8"))
+    cookies = payload.get("cookies") or []
+    origins = payload.get("origins") or []
+
+    filtered_cookies = [cookie for cookie in cookies if not _is_chat_state_cookie(cookie)]
+    filtered_origins = [origin for origin in origins if not _is_chat_state_origin(origin)]
+
+    removed_cookies = len(cookies) - len(filtered_cookies)
+    removed_origins = len(origins) - len(filtered_origins)
+    if removed_cookies or removed_origins:
+        logger.info(
+            "sanitized storage state: removed chat cookies=%s origins=%s",
+            removed_cookies,
+            removed_origins,
+        )
+
+    return {
+        "cookies": filtered_cookies,
+        "origins": filtered_origins,
+    }
 
 
 @dataclass(slots=True)
@@ -117,7 +167,14 @@ class BrowserManager:
             "viewport": {"width": 1440, "height": 1200},
         }
         self.logger.info("loading samsung storage state from %s", self.config.samsung_storage_state_path)
-        context_kwargs["storage_state"] = str(self.config.samsung_storage_state_path)
+        try:
+            context_kwargs["storage_state"] = _load_sanitized_storage_state(
+                self.config.samsung_storage_state_path,
+                self.logger,
+            )
+        except Exception as error:
+            self.logger.warning("failed to sanitize storage state; using raw file: %s", error)
+            context_kwargs["storage_state"] = str(self.config.samsung_storage_state_path)
         if self.config.video_recording_enabled:
             context_kwargs["record_video_dir"] = str(self.config.video_dir)
             context_kwargs["record_video_size"] = {"width": 1440, "height": 1200}
@@ -136,10 +193,24 @@ class BrowserManager:
         """Close browser and Playwright runtime."""
 
         if self._browser is not None:
-            self._browser.close()
+            try:
+                self._browser.close()
+            except Exception as error:
+                self.logger.warning("browser close failed: %s", error)
+            finally:
+                self._browser = None
         if self._playwright is not None:
-            self._playwright.stop()
+            try:
+                self._playwright.stop()
+            except Exception as error:
+                self.logger.warning("playwright stop failed: %s", error)
+            finally:
+                self._playwright = None
         if self._xvfb_process is not None:
-            self._xvfb_process.terminate()
-            self._xvfb_process.wait(timeout=5)
-            self._xvfb_process = None
+            try:
+                self._xvfb_process.terminate()
+                self._xvfb_process.wait(timeout=5)
+            except Exception as error:
+                self.logger.warning("xvfb shutdown failed: %s", error)
+            finally:
+                self._xvfb_process = None

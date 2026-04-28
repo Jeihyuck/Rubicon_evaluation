@@ -145,6 +145,15 @@ class TestStaticUiFiltering:
         assert cleaned == "갤럭시 버즈3 프로는 ANC와 IP57 방수를 지원합니다."
         assert stripped is True
 
+    def test_strip_promo_review_blocks_trims_inline_review_tail_variant(self):
+        text = (
+            "갤럭시 북5 프로 360은 16형 기준 1.69kg입니다. "
+            "리뷰에서도 휴대성이 좋다는 반응이 많습니다."
+        )
+        cleaned, stripped = _strip_promo_review_blocks(text, question="갤럭시 북5 프로 360 무게 알려줘")
+        assert cleaned == "갤럭시 북5 프로 360은 16형 기준 1.69kg입니다."
+        assert stripped is True
+
     def test_clean_answer_candidate_details_reports_cleaning_flags(self):
         text = "배터리 5000mAh입니다. 더 알아보기\n추천 질문: 카메라는 어떤가요?\nCS AI 챗봇에 문의해 주세요."
         details = _clean_answer_candidate_details(text, question="배터리 알려줘")
@@ -162,6 +171,56 @@ class TestStaticUiFiltering:
 
     def test_clean_answer_candidate_details_detects_truncated_answer(self):
         details = _clean_answer_candidate_details("운동용으로도 매칭이 .", question="버즈3 프로 방수 알려줘")
+        assert details["truncated_detected"] is True
+        assert details["cleaned_answer"] == ""
+
+    def test_clean_answer_candidate_details_rejects_progress_placeholder(self):
+        details = _clean_answer_candidate_details(
+            "갤럭시 S26 정보를 정리하고 있어요.",
+            question="갤럭시 S26 울트라 핵심 사양 알려줘",
+        )
+        assert details["cleaned_answer"] == ""
+
+    def test_clean_answer_candidate_details_rejects_progress_placeholder_with_topic_nouns_only(self):
+        details = _clean_answer_candidate_details(
+            "갤럭시 워치 울트라와 갤럭시 워치7의 배터리·운동 기능 차이와 현재 혜택을 정리하고 있어요.",
+            question="갤럭시 워치 울트라와 갤럭시 워치7 차이 알려줘",
+        )
+        assert details["cleaned_answer"] == ""
+
+    def test_clean_answer_candidate_details_rejects_spaced_progress_placeholder_variant(self):
+        details = _clean_answer_candidate_details(
+            "OLED TV와 Neo QLED TV 제품별 특징과 혜택을 비교해 보고 있어요.",
+            question="OLED TV와 Neo QLED TV 차이 알려줘",
+        )
+        assert details["cleaned_answer"] == ""
+
+    def test_clean_answer_candidate_details_rejects_formal_progress_placeholder_variant(self):
+        details = _clean_answer_candidate_details(
+            "오디세이 OLED G8과 Neo G9의 화면 크기, 주사율, 게임 몰입감 차이를 비교할 수 있게 정보를 정리하고 있습니다.",
+            question="오디세이 OLED G8과 Neo G9 차이 알려줘",
+        )
+        assert details["cleaned_answer"] == ""
+
+    def test_clean_answer_candidate_details_rejects_model_checking_placeholder_variant(self):
+        details = _clean_answer_candidate_details(
+            "갤럭시 북5 프로 360의 모델별 무게, 배터리, 포트 구성을 확인하고 있습니다.",
+            question="갤럭시 북5 프로 360의 무게와 배터리 그리고 포트 구성을 알려주세요.",
+        )
+        assert details["cleaned_answer"] == ""
+
+    def test_clean_answer_candidate_details_keeps_substantive_answer_with_progress_phrase(self):
+        details = _clean_answer_candidate_details(
+            "비교해보고 있어요. 갤럭시 버즈3 프로는 ANC와 IP57 방수를 지원합니다.",
+            question="갤럭시 버즈3 프로 방수와 ANC 알려줘",
+        )
+        assert details["cleaned_answer"] == "비교해보고 있어요. 갤럭시 버즈3 프로는 ANC와 IP57 방수를 지원합니다."
+
+    def test_clean_answer_candidate_details_rejects_embedded_broken_fragment(self):
+        details = _clean_answer_candidate_details(
+            "비스포크 냉장고는 633~640L 키친핏 Max가 3~4인 가정에서 균형이 . 864L 모델은 대용량 보관에 적합합니다.",
+            question="비스포크 냉장고 용량 추천해줘",
+        )
         assert details["truncated_detected"] is True
         assert details["cleaned_answer"] == ""
 
