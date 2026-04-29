@@ -1,5 +1,6 @@
 .env
-.secrets/
+.secrets/*
+!.secrets/samsung_storage_state.json
 .codespaces-vnc/
 .github/
 __pycache__/
@@ -9,6 +10,7 @@ __pycache__/
 .venv/
 venv/
 *storage_state*.json
+!.secrets/samsung_storage_state.json
 artifacts/extracted_frames/
 artifacts/fullpage/*.png
 artifacts/chatbox/*.png

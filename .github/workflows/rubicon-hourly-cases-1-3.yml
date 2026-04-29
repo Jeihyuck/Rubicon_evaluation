@@ -44,16 +44,13 @@ jobs:
       - name: Install Playwright Chromium
         run: python -m playwright install --with-deps chromium
 
-      - name: Restore Samsung login storage state
-        env:
-          SAMSUNG_STORAGE_STATE_JSON_BASE64: ${{ secrets.SAMSUNG_STORAGE_STATE_JSON_BASE64 }}
+      - name: Verify committed Samsung login storage state
         run: |
-          if [[ -z "${SAMSUNG_STORAGE_STATE_JSON_BASE64}" ]]; then
-            echo "Missing required secret: SAMSUNG_STORAGE_STATE_JSON_BASE64" >&2
+          if [[ ! -f .secrets/samsung_storage_state.json ]]; then
+            echo "Missing required file: samsung-rubicon-qa/.secrets/samsung_storage_state.json" >&2
+            echo "Commit the Samsung login storage state file into the branch before running this workflow." >&2
             exit 1
           fi
-          mkdir -p .secrets
-          printf '%s' "${SAMSUNG_STORAGE_STATE_JSON_BASE64}" | base64 --decode > .secrets/samsung_storage_state.json
 
       - name: Run Rubicon QA cases 1-3
         run: python run.py
