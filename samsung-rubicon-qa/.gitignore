@@ -1,5 +1,7 @@
 .env
 .secrets/
+.codespaces-vnc/
+.github/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
@@ -7,6 +9,7 @@ __pycache__/
 .venv/
 venv/
 *storage_state*.json
+artifacts/extracted_frames/
 artifacts/fullpage/*.png
 artifacts/chatbox/*.png
 artifacts/chatbox/*.html
@@ -15,6 +18,12 @@ artifacts/trace/*
 !artifacts/video/.gitkeep
 !artifacts/trace/.gitkeep
 reports/*.log
+reports/latest_conversation.md
 reports/latest_results.json
 reports/latest_results.csv
+reports/latest_results_detailed.csv
+reports/latest_results_table.md
 reports/summary.md
+reports/experiments/
+reports/isolated_runs/
+reports/rerun_backup/
