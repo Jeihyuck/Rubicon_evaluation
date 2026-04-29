@@ -11,6 +11,7 @@
 - Evaluator Version: evaluator-v2.4
 - Harness Version: harness-v1.0
 - Run Mode: speed
+
 ## case01
 
 - Question: 갤럭시 S26 울트라의 디스플레이 크기와 카메라 구성 그리고 배터리 같은 핵심 사양을 알려주세요.
@@ -27,7 +28,6 @@
 - Error Category: low_confidence_extraction
 - Flags: evaluation_failed
 - Needs Human Review: True
-
 
 ## case02
 
@@ -121,7 +121,6 @@
 
 - (empty)
 
-
 ## case03
 
 - Question: 갤럭시 북5 프로 360의 무게와 배터리 그리고 포트 구성을 알려주세요.
@@ -213,7 +212,6 @@
 ### Message History (case03)
 
 - (empty)
-
 
 ## case04
 
@@ -307,7 +305,6 @@
 
 - (empty)
 
-
 ## case05
 
 - Question: 갤럭시 워치 울트라와 갤럭시 워치7의 차이를 배터리와 운동 기능 중심으로 비교해 주세요.
@@ -399,7 +396,6 @@
 ### Message History (case05)
 
 - (empty)
-
 
 ## case06
 
@@ -493,7 +489,6 @@
 
 - (empty)
 
-
 ## case07
 
 - Question: 비스포크 AI 콤보 세탁건조기의 세탁 용량과 건조 용량 그리고 AI 기능을 알려주세요.
@@ -510,7 +505,6 @@
 - Error Category: low_confidence_extraction
 - Flags: evaluation_failed
 - Needs Human Review: True
-
 
 ## case08
 
@@ -604,7 +598,6 @@
 
 - (empty)
 
-
 ## case09
 
 - Question: 오디세이 OLED G8과 오디세이 Neo G9의 차이를 화면 크기와 주사율 그리고 게임 몰입감 기준으로 비교해 주세요.
@@ -695,7 +688,6 @@
 ### Message History (case09)
 
 - (empty)
-
 
 ## case10
 

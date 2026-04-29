@@ -215,7 +215,7 @@ PWDEBUG=1 python run.py
 
 ## GitHub Actions 자동 실행
 
-GitHub Actions 로 case01~case03 을 매시 30분마다 자동 실행하도록 워크플로를 추가했다.
+GitHub Actions 로 case01~case03 을 매시 15분마다 자동 실행하도록 워크플로를 추가했다.
 
 - Workflow 파일: [.github/workflows/rubicon-hourly-cases-1-3.yml](../.github/workflows/rubicon-hourly-cases-1-3.yml)
 - 실행 대상: `case01,case02,case03`
