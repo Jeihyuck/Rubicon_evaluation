@@ -23,6 +23,7 @@ def write_reports(
     csv_path = config.reports_dir / "latest_results.csv"
     summary_path = config.reports_dir / "summary.md"
     conversation_path = config.reports_dir / "latest_conversation.md"
+    table_path = config.reports_dir / "latest_results_table.md"
 
     records = [result.to_result_record() for result in run_results]
     write_json(json_path, records)
@@ -39,11 +40,13 @@ def write_reports(
         encoding="utf-8",
     )
     _write_latest_conversation(run_results, conversation_path, config, runtime_metadata=runtime_metadata)
+    table_path.write_text(_build_results_table(run_results, runtime_metadata=runtime_metadata), encoding="utf-8")
     return {
         "json": str(json_path),
         "csv": str(csv_path),
         "summary": str(summary_path),
         "conversation": str(conversation_path),
+        "table": str(table_path),
     }
 
 
@@ -122,6 +125,60 @@ def _runtime_metadata_lines(runtime_metadata: dict[str, str] | None) -> list[str
         f"- Harness Version: {runtime_metadata.get('harness_version', 'unknown')}",
         f"- Run Mode: {runtime_metadata.get('run_mode', 'unknown')}",
     ]
+
+
+def _markdown_table_cell(value: Any, *, max_length: int = 100) -> str:
+    text = str(value or "(none)").strip()
+    if not text:
+        text = "(none)"
+    text = " ".join(text.split())
+    if len(text) > max_length:
+        text = f"{text[: max_length - 3].rstrip()}..."
+    return text.replace("|", r"\|")
+
+
+def _build_results_table(
+    run_results: list[RunResult],
+    runtime_metadata: dict[str, str] | None = None,
+) -> str:
+    lines = [
+        "# Samsung Rubicon QA Results Table",
+        "",
+        "GitHub Actions 요약이나 빠른 결과 확인용 표다.",
+    ]
+    lines.extend(_runtime_metadata_lines(runtime_metadata))
+    lines.extend(
+        [
+            "",
+            "| Case | Question | Run | Extraction | Acceptance | Quality | Score | Final Answer | Reason |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+
+    for item in run_results:
+        pair = item.pair
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_table_cell(pair.case_id, max_length=20),
+                    _markdown_table_cell(pair.question, max_length=80),
+                    _markdown_table_cell(pair.run_status, max_length=20),
+                    _markdown_table_cell(pair.extraction_status, max_length=20),
+                    _markdown_table_cell(pair.acceptance_status, max_length=20),
+                    _markdown_table_cell(pair.quality_status, max_length=20),
+                    _markdown_table_cell(f"{item.evaluation.overall_score:.1f}/10", max_length=12),
+                    _markdown_table_cell(_final_answer_text(item), max_length=140),
+                    _markdown_table_cell(_reason_text(item), max_length=120),
+                ]
+            )
+            + " |"
+        )
+
+    if not run_results:
+        lines.append("| (none) | (none) | (none) | (none) | (none) | (none) | 0.0/10 | (none) | 결과 없음 |")
+
+    return "\n".join(lines) + "\n"
 
 
 def _extraction_rejected_reason(result: RunResult) -> str:

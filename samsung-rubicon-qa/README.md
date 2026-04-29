@@ -111,6 +111,38 @@ cp .env.example .env
 
 필수 값은 OPENAI_API_KEY 다.
 
+## 빠른 실행 스크립트
+
+압축을 푼 뒤 한 번에 환경 준비와 실행을 하려면 아래 스크립트를 사용할 수 있다.
+
+```bash
+cd samsung-rubicon-qa
+bash scripts/setup_and_run.sh
+```
+
+이 스크립트는 `RUN_MODE` 를 따로 지정하지 않으면 기본 실행을 `standard` 로 강제한다. 빠른 모드가 필요하면 아래처럼 명시적으로 지정한다.
+
+```bash
+cd samsung-rubicon-qa
+RUN_MODE=speed bash scripts/setup_and_run.sh
+```
+
+주요 옵션은 아래와 같다.
+
+- 원격 데스크톱도 같이 시작: `bash scripts/setup_and_run.sh --start-vnc`
+- 삼성 로그인 세션만 저장: `bash scripts/setup_and_run.sh --start-vnc --login`
+- 설치만 먼저 수행: `bash scripts/setup_and_run.sh --setup-only`
+
+스크립트가 수행하는 일은 아래와 같다.
+
+1. `.venv` 가 없으면 생성
+2. `requirements.txt` 설치
+3. `python -m playwright install chromium` 실행
+4. `.env` 가 없으면 `.env.example` 에서 자동 생성
+5. 저장된 삼성 세션이 있으면 그대로 `python run.py` 실행
+
+`OPENAI_API_KEY` 가 비어 있어도 브라우저 실행 자체는 진행되지만, GPT 평가는 실패한다.
+
 ## Codespaces 삼성 로그인 세션 저장
 
 로컬 브라우저를 쓰지 않고 Codespaces 안에서 보이는 원격 데스크톱 브라우저로 삼성계정 로그인을 끝낸 뒤, Playwright storage state를 저장할 수 있다.
@@ -180,6 +212,29 @@ python run.py
 ```bash
 PWDEBUG=1 python run.py
 ```
+
+## GitHub Actions 자동 실행
+
+GitHub Actions 로 case01~case03 을 매시 30분마다 자동 실행하도록 워크플로를 추가했다.
+
+- Workflow 파일: [.github/workflows/rubicon-hourly-cases-1-3.yml](../.github/workflows/rubicon-hourly-cases-1-3.yml)
+- 실행 대상: `case01,case02,case03`
+- 기본 모드: `RUN_MODE=standard`
+- 결과 표: `reports/latest_results_table.md`
+
+Actions 에서 정상 동작하려면 아래 secret 이 필요하다.
+
+1. `SAMSUNG_STORAGE_STATE_JSON_BASE64`
+2. `OPENAI_API_KEY`
+
+세션 secret 생성 예시는 아래와 같다.
+
+```bash
+cd samsung-rubicon-qa
+base64 -w 0 .secrets/samsung_storage_state.json
+```
+
+GitHub Actions 실행이 끝나면 Job Summary 에 질문/답변 결과 표가 올라가고, `latest_results_table.md`, `latest_results.json`, `latest_conversation.md` 와 스크린샷 아티팩트도 함께 업로드된다.
 
 ## 실제 실행 흐름
 

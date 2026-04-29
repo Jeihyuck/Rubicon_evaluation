@@ -13,7 +13,7 @@ from app.config import AppConfig
 from app.harness import build_harness_summary
 from app.evaluator import fallback_evaluation
 from app.models import EvalResult, ExtractedPair, RunResult, RuntimeMetadata, TestCase
-from app.report_writer import _build_summary, format_case_console_block, write_reports
+from app.report_writer import _build_results_table, _build_summary, format_case_console_block, write_reports
 from app.utils import utc_now_timestamp
 
 
@@ -118,6 +118,7 @@ class TestWriteReports:
             assert Path(paths["json"]).exists()
             assert Path(paths["csv"]).exists()
             assert Path(paths["summary"]).exists()
+            assert Path(paths["table"]).exists()
 
     def test_json_report_is_valid(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -226,6 +227,30 @@ class TestBuildSummary:
         assert "answer_accepted count: 1" in summary
         assert "quality_passed count: 1" in summary
         assert "accepted rate: 100.00%" in summary
+
+
+class TestBuildResultsTable:
+    def test_results_table_contains_markdown_rows(self):
+        results = [
+            _make_result("case01", status="passed", score=8.0, run_mode="standard"),
+            _make_result("case02", status="invalid_answer", score=0.0, run_mode="standard"),
+        ]
+        table = _build_results_table(
+            results,
+            runtime_metadata={
+                "branch": "test-branch",
+                "commit_sha": "abc123",
+                "extractor_version": "extractor-test",
+                "evaluator_version": "evaluator-test",
+                "harness_version": "harness-test",
+                "run_mode": "standard",
+            },
+        )
+        assert "# Samsung Rubicon QA Results Table" in table
+        assert "| Case | Question | Run | Extraction | Acceptance | Quality | Score | Final Answer | Reason |" in table
+        assert "| case01 |" in table
+        assert "| case02 |" in table
+        assert "Run Mode: standard" in table
 
 
 class TestBuildConversation:

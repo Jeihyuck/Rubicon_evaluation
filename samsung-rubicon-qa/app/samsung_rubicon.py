@@ -4374,31 +4374,7 @@ def _status_from_failure_category(category: str) -> str:
     return "failed"
 
 
-def _should_retry_case_after_answer_failure(
-    *,
-    retry_attempt: int,
-    input_verified: bool,
-    submit_effect_verified: bool,
-    user_message_echo_verified: bool,
-    status: str,
-    input_failure_category: str,
-    answer_raw: str,
-    needs_retry_extraction: bool,
-) -> bool:
-    if retry_attempt >= 2:
-        return False
-    if not (input_verified and submit_effect_verified and user_message_echo_verified):
-        return False
-    if answer_raw.strip():
-        return False
-    if status == "invalid_answer" and needs_retry_extraction:
-        return True
-    if status == "failed" and input_failure_category == "answer_not_extracted":
-        return True
-    return False
-
-
-def run_single_case(page: Page, test_case: TestCase, retry_attempt: int = 1) -> ExtractedPair:
+def run_single_case(page: Page, test_case: TestCase) -> ExtractedPair:
     """Execute one public, non-login Rubicon chatbot scenario end-to-end."""
 
     runtime = _runtime()
@@ -5002,29 +4978,6 @@ def run_single_case(page: Page, test_case: TestCase, retry_attempt: int = 1) -> 
                 artifacts = capture_artifacts(page, context, test_case.id)
         except Exception:
             pass
-
-    if _should_retry_case_after_answer_failure(
-        retry_attempt=retry_attempt,
-        input_verified=input_verified,
-        submit_effect_verified=submit_effect_verified,
-        user_message_echo_verified=user_message_echo_verified,
-        status=status,
-        input_failure_category=input_failure_category,
-        answer_raw=answer_raw,
-        needs_retry_extraction=needs_retry_extraction,
-    ):
-        runtime.logger.warning(
-            "[ANSWER][CASE_RETRY] case=%s attempt=%s reason=%s",
-            test_case.id,
-            retry_attempt + 1,
-            input_failure_category or status,
-        )
-        try:
-            if context is not None:
-                ensure_clean_conversation(page, context)
-        except Exception:
-            runtime.logger.exception("[ANSWER][CASE_RETRY] failed to clean conversation before retry")
-        return run_single_case(page, test_case, retry_attempt=retry_attempt + 1)
 
     return ExtractedPair(
         run_timestamp=utc_now_timestamp(),

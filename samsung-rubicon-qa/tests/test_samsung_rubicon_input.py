@@ -10,7 +10,6 @@ from app.config import AppConfig
 from app.logger import create_logger
 from app.samsung_rubicon import (
     _select_report_answer,
-    _should_retry_case_after_answer_failure,
     _classify_input_candidate_metadata,
     _detect_login_gate,
     _input_is_editable,
@@ -210,45 +209,6 @@ def test_detect_login_gate_from_visible_text_and_button(tmp_path):
 
 def test_status_maps_login_required_to_failed():
     assert _status_from_failure_category("login_required") == "failed"
-
-
-def test_retry_case_after_empty_invalid_answer_once():
-    assert _should_retry_case_after_answer_failure(
-        retry_attempt=1,
-        input_verified=True,
-        submit_effect_verified=True,
-        user_message_echo_verified=True,
-        status="invalid_answer",
-        input_failure_category="invalid_answer",
-        answer_raw="",
-        needs_retry_extraction=True,
-    ) is True
-
-
-def test_do_not_retry_case_after_second_attempt():
-    assert _should_retry_case_after_answer_failure(
-        retry_attempt=2,
-        input_verified=True,
-        submit_effect_verified=True,
-        user_message_echo_verified=True,
-        status="invalid_answer",
-        input_failure_category="invalid_answer",
-        answer_raw="",
-        needs_retry_extraction=True,
-    ) is False
-
-
-def test_do_not_retry_when_answer_exists():
-    assert _should_retry_case_after_answer_failure(
-        retry_attempt=1,
-        input_verified=True,
-        submit_effect_verified=True,
-        user_message_echo_verified=True,
-        status="invalid_answer",
-        input_failure_category="invalid_answer",
-        answer_raw="실제 답변",
-        needs_retry_extraction=True,
-    ) is False
 
 
 def test_submit_question_uses_ready_signal_candidate_with_focus_proxy(tmp_path):
